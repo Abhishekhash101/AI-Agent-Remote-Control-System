@@ -70,31 +70,41 @@ io.on('connection', (socket) => {
     //phone send commands 
     socket.on("remote-command", ({ sessionId, command } = {}) => {
         const session = sessions.get(sessionId);
-        if (!session || typeof command !== "string") {
+        if (!session) {
+            socket.emit("command-error", { message: "Session expired. Reconnect using the laptop's current session ID." });
+            return
+        }
+        if (typeof command !== "string") {
+            socket.emit("command-error", { message: "Invalid command." });
             return
         }
 
         //only paired phone can send the commands
         if (socket.id !== session.phone) {
+            socket.emit("command-error", { message: "This phone is no longer paired with the laptop." });
             return
         }
 
         io.to(session.laptop).emit("execute-command", {
             command
         })
+        socket.emit("command-forwarded", { command });
 
         console.log(`Command : ${command}->Laptop`)
 
     })
 
-    socket.on("disconnect", () => {
+    socket.on("disconnect", (reason) => {
 
-        console.log("Client disconnected:", socket.id);
+        console.log("Client disconnected:", socket.id, reason);
 
         // Remove sessions belonging to disconnected laptop
         for (const [sessionId, session] of sessions.entries()) {
 
             if (session.laptop === socket.id) {
+                if (session.phone) {
+                    io.to(session.phone).emit("laptop-disconnected");
+                }
                 sessions.delete(sessionId);
                 console.log(`Session removed: ${sessionId}`);
             } else if (session.phone === socket.id) {

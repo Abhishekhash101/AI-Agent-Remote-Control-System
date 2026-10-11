@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { io } from "socket.io-client";
 import "./App.css";
 
@@ -10,8 +10,10 @@ export default function App() {
   const [sessionId, setSessionId] = useState("");
   const [socket, setSocket] = useState(null);
   const [status, setStatus] = useState("Disconnected");
+  const [connecting, setConnecting] = useState(false);
+  const clientRef = useRef(null);
 
-  useEffect(() => () => socket?.disconnect(), [socket]);
+  useEffect(() => () => clientRef.current?.disconnect(), []);
 
   function connectToLaptop() {
     const normalizedSessionId = sessionId.trim().toUpperCase();
@@ -19,33 +21,57 @@ export default function App() {
       setStatus("Enter your session ID");
       return;
     }
+    if (connecting || clientRef.current) return;
 
+    setConnecting(true);
     setStatus("Connecting...");
     const client = io(SERVER_URL);
+    clientRef.current = client;
 
     client.on("connect", () => {
+      setStatus("Joining session...");
       client.emit("join-session", { sessionId: normalizedSessionId });
     });
     client.on("session-joined", () => {
+      setConnecting(false);
       setStatus("Connected");
       setSocket(client);
     });
     client.on("join-error", (data) => {
       setStatus(data?.message || "Connection failed");
+      setConnecting(false);
+      clientRef.current = null;
       client.disconnect();
     });
-    client.on("connect_error", () => {
-      setStatus("Could not reach server");
-      client.disconnect();
+    client.on("command-forwarded", ({ command }) => {
+      setStatus(`${command} sent`);
     });
-    client.on("phone-disconnected", () => {
-      setStatus("Laptop disconnected");
+    client.on("command-error", (data) => {
+      setStatus(data?.message || "Command could not be sent");
+    });
+    client.on("laptop-disconnected", () => {
+      setStatus("Laptop disconnected. Reconnect with its current session ID.");
+      setConnecting(false);
       setSocket(null);
+      clientRef.current = null;
       client.disconnect();
     });
-    client.on("disconnect", () => {
-      setSocket(null);
-      setStatus("Disconnected");
+    client.on("connect_error", (error) => {
+      setStatus(`Connecting to server: ${error.message}`);
+    });
+    client.io.on("reconnect_attempt", () => {
+      setStatus("Connection lost. Reconnecting...");
+    });
+    client.on("disconnect", (reason) => {
+      if (reason === "io server disconnect") {
+        setConnecting(false);
+        setSocket(null);
+        clientRef.current = null;
+        setStatus("Server closed the connection. Reconnect to continue.");
+      } else {
+        // Socket.IO reconnects automatically after temporary transport drops.
+        setStatus("Connection lost. Reconnecting...");
+      }
     });
   }
 
@@ -58,7 +84,9 @@ export default function App() {
   }
 
   function disconnect() {
-    socket?.disconnect();
+    clientRef.current?.disconnect();
+    clientRef.current = null;
+    setConnecting(false);
     setSocket(null);
     setStatus("Disconnected");
   }
@@ -84,8 +112,8 @@ export default function App() {
         />
 
         {!socket ? (
-          <button className="connect" onClick={connectToLaptop}>
-            Connect to laptop <span aria-hidden="true">→</span>
+          <button className="connect" onClick={connectToLaptop} disabled={connecting}>
+            {connecting ? "Connecting..." : <>Connect to laptop <span aria-hidden="true">→</span></>}
           </button>
         ) : (
           <button className="disconnect" onClick={disconnect}>
