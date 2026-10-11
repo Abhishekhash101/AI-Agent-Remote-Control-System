@@ -2,7 +2,7 @@
 import socketio
 import pyautogui
 
-SERVER_URL = "http://127.0.0.1:3000"
+SERVER_URL = "https://agentbridge-server.onrender.com"
 
 sio = socketio.Client(reconnection=True)
 
