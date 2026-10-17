@@ -465,3 +465,151 @@ footer span { margin: 0 7px; color: #2ca88e; }
   background: #0d1a2e;
 }
 .codex-message.assistant .codex-role-badge { color: #7ea9f0; }
+
+/* ── Live Process Monitor ────────────────────────────────────────── */
+.codex-process-monitor {
+  margin: 12px 0 6px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  border: 1px solid #233b47;
+  background: #071018;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: fadeIn .2s ease-in;
+}
+
+.codex-process-monitor.running {
+  border-color: #176356;
+  box-shadow: 0 0 16px rgba(46, 188, 157, 0.12);
+}
+
+.codex-process-monitor.completed {
+  border-color: #1e5a40;
+}
+
+.codex-process-monitor.failed {
+  border-color: #632026;
+}
+
+.process-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.process-title {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  font-size: 11px;
+  color: #a4b4c7;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.process-title code {
+  font-family: 'DM Mono', monospace;
+  color: #5ee4c2;
+  font-size: 11px;
+  background: #11202e;
+  padding: 2px 6px;
+  border-radius: 4px;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  overflow: hidden;
+  max-width: 220px;
+}
+
+.process-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.process-dot.running {
+  background: #2ebc9d;
+  box-shadow: 0 0 8px #2ebc9d;
+  animation: pulse-dot 1s infinite alternate;
+}
+
+.process-dot.completed {
+  background: #4ade80;
+}
+
+.process-dot.failed {
+  background: #f87171;
+}
+
+@keyframes pulse-dot {
+  from { opacity: 0.4; transform: scale(0.85); }
+  to   { opacity: 1.0; transform: scale(1.15); }
+}
+
+.process-badge {
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: .05em;
+  padding: 3px 7px;
+  border-radius: 20px;
+  flex-shrink: 0;
+}
+
+.process-badge.running {
+  background: #133a33;
+  color: #5ee4c2;
+  border: 1px solid #2ebc9d;
+}
+
+.process-badge.completed {
+  background: #103322;
+  color: #86efac;
+  border: 1px solid #22c55e;
+}
+
+.process-badge.failed {
+  background: #381216;
+  color: #fca5a5;
+  border: 1px solid #ef4444;
+}
+
+.process-live-output {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: #03070b;
+  border: 1px solid #162534;
+  color: #79d7bb;
+  font: 11px/1.4 'DM Mono', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 140px;
+  overflow-y: auto;
+}
+
+/* Tool execution status badge in messages */
+.tool-status-tag {
+  font-size: 9px;
+  font-weight: 700;
+  padding: 1px 5px;
+  border-radius: 4px;
+  margin-left: auto;
+}
+
+.tool-status-tag.running {
+  background: #1b4d44;
+  color: #5ee4c2;
+}
+
+.tool-status-tag.completed {
+  background: #173f2a;
+  color: #86efac;
+}
+
+.tool-status-tag.failed {
+  background: #44171a;
+  color: #fca5a5;
+}
+

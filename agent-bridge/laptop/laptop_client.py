@@ -1,5 +1,7 @@
 
+import os
 import shutil
+import sys
 import threading
 import time
 from pathlib import Path
@@ -26,6 +28,7 @@ codex_app = None
 codex_lock = threading.Lock()
 codex_thread_starting = False
 pyautogui_lock = threading.Lock()
+PROMPT_PIPE_FILE = Path("/tmp/agentbridge_prompt")
 
 ALLOWED_COMMANDS = {
     "ENTER": "enter",
@@ -54,7 +57,7 @@ def safe_emit(event, data):
         if sio.connected:
             sio.emit(event, data)
         else:
-            print(f"[offline] could not emit '{event}' – socket not connected")
+            pass
     except Exception as err:
         print(f"[emit error] {event}: {err}")
 
@@ -88,30 +91,36 @@ def disconnect(reason=None):
 def session_created(data):
     global session_id
     session_id = data["sessionId"]
-    print("\nSession created!")
-    print("Session ID:", session_id)
-    print("Waiting for phone commands...")
+    print("\n" + "=" * 58)
+    print("  ✅ Session created!")
+    print(f"  🔑 Session ID: {session_id}  (enter this on your phone)")
+    print("  ⚡ Bi-directional Codex is active")
+    print("=" * 58 + "\n")
+    # Auto-initialize Codex so it is immediately ready
+    threading.Thread(target=start_codex_thread, daemon=True).start()
 
 
 @sio.on("phone-connected")
 def phone_connected():
-    print("Phone connected!")
-    if codex_app:
-        threading.Thread(target=start_codex_thread, daemon=True).start()
-        for approval in codex_app.pending_approvals():
-            emit_codex_approval(approval)
+    print("\n📱 Phone connected! Bi-way synchronization is active.\n")
+    if codex_app and codex_app.thread_id:
+        safe_emit("codex-thread-ready", {"sessionId": session_id, "threadId": codex_app.thread_id, "cwd": codex_app.cwd})
+        messages = codex_app.read_history()
+        safe_emit("codex-history", {
+            "sessionId": session_id,
+            "messages": messages,
+            "busy": bool(codex_app.active_turn_id),
+        })
 
 
 @sio.on("execute-command")
 def execute_command(data):
-    command = data.get("command", "").upper()
+    command = data.get("command")
     if command not in ALLOWED_COMMANDS:
-        print("Blocked unknown command:", command)
         return
     try:
         with pyautogui_lock:
             pyautogui.press(ALLOWED_COMMANDS[command])
-        print("Executed command:", command)
     except Exception as error:
         print("Could not execute command:", repr(error))
 
@@ -119,26 +128,22 @@ def execute_command(data):
 @sio.on("execute-pointer")
 def execute_pointer(data):
     action = data.get("action")
+    screen_width, screen_height = pyautogui.size()
     if action == "scroll":
-        amount = data.get("amount")
-        if isinstance(amount, int) and -10 <= amount <= 10:
-            try:
-                with pyautogui_lock:
-                    pyautogui.scroll(amount)
-            except Exception as error:
-                print("Could not execute scroll:", repr(error))
+        amount = data.get("amount", 0)
+        if isinstance(amount, (int, float)):
+            with pyautogui_lock:
+                pyautogui.scroll(-int(amount) * 60)
         return
-    x, y = data.get("x"), data.get("y")
-    if action not in {"move", "down", "up", "click", "right-click", "double-click"} \
-            or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+
+    x = data.get("x")
+    y = data.get("y")
+    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
         return
+
+    point = (int(x * screen_width), int(y * screen_height))
     try:
         with pyautogui_lock:
-            width, height = pyautogui.size()
-            point = (
-                round(max(0, min(1, x)) * (width - 1)),
-                round(max(0, min(1, y)) * (height - 1)),
-            )
             if action == "click":
                 pyautogui.click(*point)
             elif action == "down":
@@ -195,6 +200,7 @@ def execute_text(data):
 
 @sio.on("phone-disconnected")
 def phone_disconnected():
+    print("\n📱 Phone disconnected.")
     release_modifiers()
 
 
@@ -214,7 +220,7 @@ def release_modifiers():
             held_mouse_buttons.discard(button)
 
 
-# ── Codex helpers ────────────────────────────────────────────────────────────
+# ── Codex Handlers ───────────────────────────────────────────────────────────
 
 def emit_codex_event(payload):
     if session_id:
@@ -228,9 +234,63 @@ def emit_codex_approval(payload):
 
 def emit_codex_error(message):
     msg = str(message)[:1000]
-    print("[Codex error]", msg)
+    print("\n[Codex error]", msg)
     if session_id:
         safe_emit("codex-error", {"sessionId": session_id, "message": msg})
+
+
+def handle_codex_notification(payload):
+    """Forward event to phone AND print live status on laptop terminal."""
+    emit_codex_event(payload)
+
+    method = payload.get("method")
+    params = payload.get("params") or {}
+
+    if method == "item/started":
+        item = params.get("item") or {}
+        itype = item.get("type")
+        if itype == "commandExecution":
+            cmd = item.get("command", "")
+            print(f"\n⚙️  [Process Running]: $ {cmd}")
+        elif itype == "fileChange":
+            desc = item.get("description") or (
+                f"Modifying {list(item.get('files', {}).keys())}" if item.get("files") else "Modifying files..."
+            )
+            print(f"\n📄 [File Change]: {desc}")
+        elif itype == "webSearch":
+            print(f"\n🌐 [Web Search]: {item.get('query', '')}")
+        elif itype == "agentMessage":
+            print("\n🤖 [Codex]: ", end="", flush=True)
+
+    elif method == "item/agentMessage/delta":
+        delta = params.get("delta", "")
+        sys.stdout.write(delta)
+        sys.stdout.flush()
+
+    elif method == "item/commandExecution/outputDelta":
+        delta = params.get("delta", "")
+        sys.stdout.write(delta)
+        sys.stdout.flush()
+
+    elif method == "item/completed":
+        item = params.get("item") or {}
+        if item.get("type") == "commandExecution":
+            code = item.get("exitCode", 0)
+            print(f"\n✓ Process finished (exit {code})")
+
+    elif method == "turn/completed":
+        print("\n\n✓ Turn complete.")
+        print("[Laptop Codex] > ", end="", flush=True)
+
+
+def handle_codex_approval(payload):
+    """Forward approval request to phone AND show on laptop terminal."""
+    emit_codex_approval(payload)
+    params = payload.get("params") or {}
+    detail = params.get("command") or params.get("reason") or payload.get("method")
+    print(f"\n⚠️  [Approval Required]: {detail}")
+    print("   👉 Approve or Decline on phone, or type 'approve' / 'decline' here.")
+    print("[Laptop Codex] > ", end="", flush=True)
 
 
 def start_codex_thread():
@@ -240,24 +300,22 @@ def start_codex_thread():
             return
         codex_thread_starting = True
     try:
-        # Check that the codex binary actually exists before attempting to start
         codex_bin = shutil.which("codex")
         if not codex_bin:
-            emit_codex_error(
-                "codex binary not found. Install it with: npm install -g @openai/codex"
-            )
+            emit_codex_error("codex binary not found in PATH.")
             return
 
-        print("Starting Codex App Server...")
         with codex_lock:
             if codex_app is None:
                 codex_app = CodexAppServer(
-                    emit_codex_event, emit_codex_approval, emit_codex_error
+                    on_notification=handle_codex_notification,
+                    on_approval=handle_codex_approval,
+                    on_error=emit_codex_error,
                 )
             adapter = codex_app
 
         result = adapter.start_thread(project_root)
-        print("Codex thread ready:", result.get("threadId"))
+        print("⚡ Codex thread ready:", result.get("threadId"))
 
         safe_emit("codex-thread-ready", {"sessionId": session_id, **result})
 
@@ -278,7 +336,7 @@ def start_codex_thread():
 def codex_start(data):
     if not session_id or data.get("sessionId") != session_id:
         return
-    print("Phone requested Codex start.")
+    print("📱 Phone requested Codex start.")
     threading.Thread(target=start_codex_thread, daemon=True).start()
 
 
@@ -292,6 +350,7 @@ def codex_send(data):
     if not adapter or not adapter.thread_id:
         emit_codex_error("Start a Codex thread before sending a message.")
         return
+    print(f"\n📱 [Phone sent prompt]: {text.strip()}")
     threading.Thread(target=_send_codex_message, args=(adapter, text.strip()), daemon=True).start()
 
 
@@ -314,8 +373,105 @@ def codex_approval_decision(data):
         adapter.respond_to_approval(
             data.get("requestId"), data.get("method"), data.get("decision")
         )
+        print(f"\n📱 Phone responded to approval: {data.get('decision')}")
     except Exception as error:
         emit_codex_error(error)
+
+
+# ── Interactive Terminal Input (Laptop -> Codex & Phone) ────────────────────
+
+def send_laptop_prompt(text):
+    """Send a prompt typed directly on this laptop to Codex & broadcast to phone."""
+    global codex_app
+    with codex_lock:
+        adapter = codex_app
+
+    if not adapter or not adapter.thread_id:
+        print("[Initializing Codex thread... please wait a few seconds]")
+        start_codex_thread()
+        with codex_lock:
+            adapter = codex_app
+
+    if not adapter or not adapter.thread_id:
+        print("[Error: Codex is not ready yet. Please try again in 5 seconds.]")
+        return
+
+    # 1. Inform phone of this laptop prompt so it renders in chat immediately
+    safe_emit("codex-event", {
+        "sessionId": session_id,
+        "event": {
+            "method": "codex/user-prompt",
+            "params": {"text": text, "source": "laptop"},
+        },
+    })
+
+    # 2. Dispatch to Codex process
+    threading.Thread(target=_send_codex_message, args=(adapter, text), daemon=True).start()
+
+
+def terminal_input_loop():
+    """CLI loop enabling the laptop user to type prompts directly in this terminal."""
+    time.sleep(2)
+    print("\n" + "-" * 58)
+    print("  💬 BI-DIRECTIONAL CODEX TERMINAL READY")
+    print("  Type prompts here on laptop OR send from your phone.")
+    print("  All running processes and output sync live in both places!")
+    print("  (Type 'approve'/'decline' if approval is requested)")
+    print("-" * 58)
+
+    while True:
+        try:
+            line = input("[Laptop Codex] > ").strip()
+            if not line:
+                continue
+
+            # Check if user typed quick approval
+            if line.lower() in {"y", "yes", "approve"} and codex_app:
+                pending = codex_app.pending_approvals()
+                if pending:
+                    req = pending[0]
+                    codex_app.respond_to_approval(req["requestId"], req["method"], "accept")
+                    print("✓ Approved from laptop terminal.")
+                    continue
+
+            if line.lower() in {"n", "no", "decline"} and codex_app:
+                pending = codex_app.pending_approvals()
+                if pending:
+                    req = pending[0]
+                    codex_app.respond_to_approval(req["requestId"], req["method"], "decline")
+                    print("❌ Declined from laptop terminal.")
+                    continue
+
+            if line.lower() in {"exit", "quit"}:
+                print("To stop the client, press Ctrl+C.")
+                continue
+
+            send_laptop_prompt(line)
+
+        except (EOFError, KeyboardInterrupt):
+            break
+        except Exception as error:
+            print("Terminal input error:", repr(error))
+
+
+def file_pipe_watcher_loop():
+    """Allows sending prompts from ANY other terminal by writing to /tmp/agentbridge_prompt."""
+    try:
+        PROMPT_PIPE_FILE.unlink(missing_ok=True)
+    except Exception:
+        pass
+
+    while True:
+        try:
+            if PROMPT_PIPE_FILE.exists():
+                text = PROMPT_PIPE_FILE.read_text(encoding="utf-8").strip()
+                PROMPT_PIPE_FILE.unlink(missing_ok=True)
+                if text:
+                    print(f"\n💻 [Prompt from external terminal]: {text}")
+                    send_laptop_prompt(text)
+        except Exception:
+            pass
+        time.sleep(0.5)
 
 
 # ── Connection with retry ────────────────────────────────────────────────────
@@ -347,6 +503,10 @@ def _connect_with_retry():
 
 if __name__ == "__main__":
     try:
+        # Start background threads for local CLI prompt and external pipe listener
+        threading.Thread(target=terminal_input_loop, daemon=True).start()
+        threading.Thread(target=file_pipe_watcher_loop, daemon=True).start()
+
         _connect_with_retry()
         sio.wait()
     except KeyboardInterrupt:
@@ -357,3 +517,7 @@ if __name__ == "__main__":
     finally:
         if codex_app:
             codex_app.stop()
+        try:
+            PROMPT_PIPE_FILE.unlink(missing_ok=True)
+        except Exception:
+            pass

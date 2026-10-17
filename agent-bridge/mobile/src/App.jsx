@@ -24,6 +24,7 @@ export default function App() {
   const [codexBusy, setCodexBusy] = useState(false);
   const [codexStatus, setCodexStatus] = useState("Codex is not connected");
   const [codexActivity, setCodexActivity] = useState("");
+  const [activeProcess, setActiveProcess] = useState(null);
   const clientRef = useRef(null);
   const peerRef = useRef(null);
   const streamRef = useRef(null);
@@ -40,7 +41,7 @@ export default function App() {
   // Auto-scroll transcript to bottom whenever messages update or Codex starts typing
   useEffect(() => {
     transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [codexMessages, codexBusy, codexActivity]);
+  }, [codexMessages, codexBusy, codexActivity, activeProcess]);
 
   function closePeer() {
     peerRef.current?.close();
@@ -232,40 +233,102 @@ export default function App() {
     });
     client.on("codex-event", (event) => {
       const params = event.params || {};
+
+      // ── Prompt typed on laptop ───────────────────────────────────────────
+      if (event.method === "codex/user-prompt") {
+        const text = params.text;
+        if (text) {
+          setCodexMessages((prev) => {
+            if (prev.some((m) => m.text === text && m.role === "user")) return prev;
+            return [...prev, { id: `user-laptop-${Date.now()}`, role: "user", text, source: "laptop" }];
+          });
+          setCodexBusy(true);
+          setCodexActivity("Codex is working on laptop prompt…");
+        }
+      }
+
       if (event.method === "turn/started") {
         setCodexBusy(true);
         setCodexActivity("Codex is working on your request…");
       }
+
       if (event.method === "item/started") {
         const item = params.item || {};
-        if (item.type === "commandExecution") setCodexActivity(`Running command: ${item.command || "command"}`);
-        else if (item.type === "fileChange") setCodexActivity("Codex is preparing file changes…");
-        else if (item.type === "mcpToolCall") setCodexActivity(`Using tool: ${item.server || item.tool || item.toolName || "MCP tool"}`);
-        else if (item.type === "webSearch") setCodexActivity("Searching the web…");
-        else if (item.type === "agentMessage") setCodexActivity("Codex is writing a response…");
+        if (item.type === "commandExecution") {
+          const cmd = item.command || "command";
+          setCodexActivity(`Running command: ${cmd}`);
+          setActiveProcess({
+            id: item.id || `proc-${Date.now()}`,
+            command: cmd,
+            status: "running",
+            output: "",
+          });
+          const toolId = `tool-${item.id || Date.now()}`;
+          setCodexMessages((prev) => {
+            if (prev.some((m) => m.id === toolId)) return prev;
+            return [...prev, { id: toolId, role: "tool", command: cmd, status: "running", text: `$ ${cmd}\n` }];
+          });
+        } else if (item.type === "userMessage") {
+          const promptText = (item.content || [])
+            .filter((p) => p.type === "text" || p.type === "input_text")
+            .map((p) => p.text)
+            .join("\n") || item.text || "";
+          if (promptText) {
+            setCodexMessages((prev) => {
+              if (prev.some((m) => m.text === promptText && m.role === "user")) return prev;
+              return [...prev, { id: `user-laptop-${item.id || Date.now()}`, role: "user", text: promptText, source: "laptop" }];
+            });
+          }
+        } else if (item.type === "fileChange") {
+          const desc = item.description || (item.files ? `Editing ${Object.keys(item.files).join(", ")}` : "Codex is editing files…");
+          setCodexActivity(`📄 ${desc}`);
+        } else if (item.type === "mcpToolCall") {
+          setCodexActivity(`Using tool: ${item.server || item.tool || item.toolName || "MCP tool"}`);
+        } else if (item.type === "webSearch") {
+          setCodexActivity(`Searching web: ${item.query || "web"}`);
+        } else if (item.type === "agentMessage") {
+          setCodexActivity("Codex is writing a response…");
+        }
       }
+
+      if (event.method === "item/commandExecution/outputDelta" && typeof params.delta === "string") {
+        const delta = params.delta;
+        setActiveProcess((prev) => prev ? { ...prev, output: (prev.output + delta).slice(-4000) } : null);
+        const toolId = `tool-${params.itemId || "current"}`;
+        setCodexMessages((previous) => {
+          const existing = previous.findIndex((m) => m.id === toolId);
+          if (existing < 0) return [...previous, { id: toolId, role: "tool", text: delta }];
+          return previous.map((m, index) => index === existing ? { ...m, text: m.text + delta } : m);
+        });
+      }
+
       if (event.method === "item/completed") {
         const item = params.item || {};
-        if (item.type === "commandExecution") setCodexActivity("Command finished; Codex is continuing…");
-        else if (item.type === "fileChange") setCodexActivity("File changes prepared; Codex is continuing…");
+        if (item.type === "commandExecution") {
+          const isSuccess = item.exitCode === 0 || item.exitCode === undefined;
+          setCodexActivity(`Command finished (${isSuccess ? "exit 0" : `exit ${item.exitCode}`})`);
+          setActiveProcess((prev) => prev ? { ...prev, status: isSuccess ? "completed" : "failed", exitCode: item.exitCode } : null);
+          const toolId = `tool-${item.id || "current"}`;
+          setCodexMessages((previous) => previous.map((m) => m.id === toolId ? { ...m, status: isSuccess ? "completed" : "failed" } : m));
+        } else if (item.type === "fileChange") {
+          setCodexActivity("File changes saved; Codex is continuing…");
+        }
       }
+
       if (event.method === "turn/completed") {
         setCodexBusy(false);
         setCodexActivity("");
         setCodexStatus(params.turn?.status === "failed" ? "Codex turn failed" : "Codex turn complete");
+        setTimeout(() => {
+          setActiveProcess((prev) => prev && prev.status !== "running" ? null : prev);
+        }, 5000);
       }
+
       if (event.method === "item/agentMessage/delta" && typeof params.delta === "string") {
         const id = `assistant-${params.itemId || "current"}`;
         setCodexMessages((previous) => {
           const existing = previous.findIndex((message) => message.id === id);
           if (existing < 0) return [...previous, { id, role: "assistant", text: params.delta }];
-          return previous.map((message, index) => index === existing ? { ...message, text: message.text + params.delta } : message);
-        });
-      } else if (event.method === "item/commandExecution/outputDelta" && typeof params.delta === "string") {
-        const id = `tool-${params.itemId || "current"}`;
-        setCodexMessages((previous) => {
-          const existing = previous.findIndex((message) => message.id === id);
-          if (existing < 0) return [...previous, { id, role: "tool", text: params.delta }];
           return previous.map((message, index) => index === existing ? { ...message, text: message.text + params.delta } : message);
         });
       }
@@ -341,7 +404,7 @@ export default function App() {
     event.preventDefault();
     const text = codexDraft.trim();
     if (!socket?.connected || !codexThreadId || !text) return;
-    setCodexMessages((previous) => [...previous, { id: `user-${Date.now()}`, role: "user", text }]);
+    setCodexMessages((previous) => [...previous, { id: `user-phone-${Date.now()}`, role: "user", text, source: "phone" }]);
     setCodexDraft("");
     setCodexStatus("Sending to Codex…");
     socket.emit("codex-send", { sessionId: sessionRef.current, text });
@@ -588,12 +651,33 @@ export default function App() {
               </div>
             </article>;
           })}
+          {/* Live Process Monitor (shows which process is running in real-time) */}
+          {activeProcess && (
+            <div className={`codex-process-monitor ${activeProcess.status}`} role="status">
+              <div className="process-header">
+                <div className="process-title">
+                  <span className={`process-dot ${activeProcess.status}`} />
+                  <strong>Active Process:</strong>
+                  <code>{activeProcess.command}</code>
+                </div>
+                <span className={`process-badge ${activeProcess.status}`}>
+                  {activeProcess.status === "running" ? "⚡ RUNNING" : activeProcess.status === "completed" ? "✓ FINISHED" : "❌ FAILED"}
+                </span>
+              </div>
+              {activeProcess.output && (
+                <pre className="process-live-output">
+                  {activeProcess.output.slice(-1200)}
+                </pre>
+              )}
+            </div>
+          )}
+
           <div className="codex-transcript" aria-live="polite">
             {codexMessages.length === 0
               ? (
                 <p className="activity-empty">
                   {codexThreadId
-                    ? (codexBusy ? "⏳ Codex is working…" : "💬 Send a message below to start")
+                    ? (codexBusy ? "⏳ Codex is working…" : "💬 Send a message below or type on your laptop")
                     : "Start Codex above to begin chatting"}
                 </p>
               )
@@ -601,8 +685,17 @@ export default function App() {
                 <article className={`codex-message ${message.role}`} key={message.id}>
                   <div className="codex-msg-header">
                     <span className="codex-role-badge">
-                      {message.role === "user" ? "🧑 You" : message.role === "tool" ? "🔧 Tool output" : "🤖 Codex"}
+                      {message.role === "user"
+                        ? (message.source === "laptop" ? "💻 Laptop User" : "📱 You (Phone)")
+                        : message.role === "tool"
+                        ? "⚙️ Process Output"
+                        : "🤖 Codex"}
                     </span>
+                    {message.role === "tool" && message.status && (
+                      <span className={`tool-status-tag ${message.status}`}>
+                        {message.status === "running" ? "RUNNING" : message.status === "completed" ? "DONE" : "FAILED"}
+                      </span>
+                    )}
                   </div>
                   <pre>{message.text}</pre>
                 </article>
