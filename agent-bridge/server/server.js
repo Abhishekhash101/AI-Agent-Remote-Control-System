@@ -34,7 +34,8 @@ io.on('connection', (socket) => {
         const sessionId = generateSessionId();
         sessions.set(sessionId, {
             laptop: socket.id,
-            phone: null
+            phone: null,
+            screenHost: null
         });
 
         socket.join(sessionId)
@@ -42,6 +43,24 @@ io.on('connection', (socket) => {
 
         console.log(`Session created : ${sessionId}`);
 
+    });
+
+    // A browser on the laptop captures the screen; the Python client remains
+    // the trusted bridge for OS-level pointer input.
+    socket.on("join-screen-host", ({ sessionId } = {}) => {
+        const session = sessions.get(sessionId);
+        if (!session || session.laptop === socket.id) {
+            socket.emit("screen-error", { message: "Invalid session for screen sharing." });
+            return;
+        }
+        if (session.screenHost && session.screenHost !== socket.id) {
+            socket.emit("screen-error", { message: "A screen host is already connected." });
+            return;
+        }
+        session.screenHost = socket.id;
+        socket.join(sessionId);
+        socket.emit("screen-host-joined", { sessionId });
+        if (session.phone) io.to(session.phone).emit("screen-host-available");
     });
 
 
@@ -63,8 +82,35 @@ io.on('connection', (socket) => {
 
         // we needto tell laptop that phone is connecteed..
         io.to(session.laptop).emit("phone-connected");
+        if (session.screenHost) io.to(session.screenHost).emit("screen-phone-ready");
 
         console.log(`Phone joined session: ${sessionId}`);
+    });
+
+    socket.on("screen-signal", ({ sessionId, signal } = {}) => {
+        const session = sessions.get(sessionId);
+        if (!session || !signal || typeof signal !== "object") return;
+        if (socket.id === session.screenHost && session.phone) {
+            io.to(session.phone).emit("screen-signal", signal);
+        } else if (socket.id === session.phone && session.screenHost) {
+            io.to(session.screenHost).emit("screen-signal", signal);
+        }
+    });
+
+    socket.on("screen-ended", ({ sessionId } = {}) => {
+        const session = sessions.get(sessionId);
+        if (session && socket.id === session.screenHost && session.phone) {
+            io.to(session.phone).emit("screen-ended");
+        }
+    });
+
+    socket.on("remote-pointer", ({ sessionId, action, x, y } = {}) => {
+        const session = sessions.get(sessionId);
+        if (!session || socket.id !== session.phone) return;
+        if (!["move", "click"].includes(action) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+        io.to(session.laptop).emit("execute-pointer", {
+            action, x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y))
+        });
     });
 
     //phone send commands 
@@ -94,6 +140,23 @@ io.on('connection', (socket) => {
 
     })
 
+    socket.on("agent-activity", ({ sessionId, event } = {}) => {
+        const session = sessions.get(sessionId);
+
+        if (!session || socket.id !== session.laptop || !session.phone) {
+            return;
+        }
+
+        if (!event || typeof event.tool !== "string") return;
+
+        io.to(session.phone).emit("agent-activity", {
+            agent: "Gemini CLI",
+            event: event.event || "BeforeTool",
+            tool: event.tool,
+            time: new Date().toISOString()
+        });
+    });
+
     socket.on("disconnect", (reason) => {
 
         console.log("Client disconnected:", socket.id, reason);
@@ -110,6 +173,10 @@ io.on('connection', (socket) => {
             } else if (session.phone === socket.id) {
                 session.phone = null;
                 io.to(session.laptop).emit("phone-disconnected");
+                if (session.screenHost) io.to(session.screenHost).emit("screen-phone-left");
+            } else if (session.screenHost === socket.id) {
+                session.screenHost = null;
+                if (session.phone) io.to(session.phone).emit("screen-host-unavailable");
             }
         }
     });

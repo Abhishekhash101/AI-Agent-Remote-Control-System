@@ -14,3 +14,21 @@ The React Compiler is not enabled on this template because of its impact on dev 
 ## Expanding the Oxlint configuration
 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
+# AgentBridge web app
+
+The phone joins the session ID printed by `laptop/laptop_client.py`. For desktop
+screen sharing, open the web app on the laptop with `?mode=host`, enter that
+same ID, connect, then choose **Share this screen** and select the display or
+window. On the phone, open the regular app, join the same ID, and touch or drag
+the preview to move/click the laptop pointer. The existing Enter, Space, and
+Esc buttons remain available.
+
+Screen capture requires browser permission and a secure context (HTTPS, or
+`localhost`). When testing on the LAN, run the host page on the laptop at
+`localhost` and open the phone app at its network address. Keep the laptop
+Python client and host browser tab running for the session. Stopping browser
+sharing or disconnecting either client ends the screen stream.
+
+Set `VITE_SERVER_URL` in `.env.local` to the Socket.IO server URL before
+building/developing. WebRTC uses a public STUN server; networks that block direct
+peer connectivity may require configuring a TURN service.
