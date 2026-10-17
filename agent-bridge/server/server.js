@@ -111,10 +111,35 @@ io.on('connection', (socket) => {
     socket.on("remote-pointer", ({ sessionId, action, x, y } = {}) => {
         const session = sessions.get(sessionId);
         if (!session || socket.id !== session.phone) return;
-        if (!["move", "click"].includes(action) || !Number.isFinite(x) || !Number.isFinite(y)) return;
+        if (action === "scroll") {
+            if (!Number.isInteger(y) || Math.abs(y) > 10) return;
+            io.to(session.laptop).emit("execute-pointer", { action, amount: y });
+            return;
+        }
+        if (!["move", "down", "up", "click", "right-click", "double-click"].includes(action) || !Number.isFinite(x) || !Number.isFinite(y)) return;
         io.to(session.laptop).emit("execute-pointer", {
             action, x: Math.max(0, Math.min(1, x)), y: Math.max(0, Math.min(1, y))
         });
+    });
+
+    socket.on("remote-key", ({ sessionId, key, action = "press" } = {}) => {
+        const session = sessions.get(sessionId);
+        const keys = new Set([
+            "enter", "space", "esc", "backspace", "tab", "delete", "insert",
+            "up", "down", "left", "right", "home", "end", "pageup", "pagedown",
+            "shift", "ctrl", "alt", "win", "capslock", "numlock", "pause", "printscreen",
+            ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`),
+        ]);
+        if (!session || socket.id !== session.phone || typeof key !== "string" || !keys.has(key)) return;
+        if (!["press", "down", "up"].includes(action)) return;
+        if (action !== "press" && !["shift", "ctrl", "alt", "win"].includes(key)) return;
+        io.to(session.laptop).emit("execute-key", { key, action });
+    });
+
+    socket.on("remote-text", ({ sessionId, text } = {}) => {
+        const session = sessions.get(sessionId);
+        if (!session || socket.id !== session.phone || typeof text !== "string" || text.length > 500) return;
+        io.to(session.laptop).emit("execute-text", { text });
     });
 
     //phone send commands 

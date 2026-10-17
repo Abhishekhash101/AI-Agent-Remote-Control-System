@@ -14,6 +14,9 @@ export default function App() {
   const [connecting, setConnecting] = useState(false);
   const [activities, setActivities] = useState([]);
   const [hasVideo, setHasVideo] = useState(false);
+  const [isSharing, setIsSharing] = useState(false);
+  const [keyboardDraft, setKeyboardDraft] = useState("");
+  const [heldModifiers, setHeldModifiers] = useState([]);
   const clientRef = useRef(null);
   const peerRef = useRef(null);
   const streamRef = useRef(null);
@@ -21,6 +24,8 @@ export default function App() {
   const sessionRef = useRef("");
   const pendingCandidates = useRef([]);
   const phoneReadyRef = useRef(false);
+  const keyboardDraftRef = useRef("");
+  const lastPointerRef = useRef({ x: 0.5, y: 0.5 });
 
   function closePeer() {
     peerRef.current?.close();
@@ -65,9 +70,11 @@ export default function App() {
     try {
       const stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: false });
       streamRef.current = stream;
+      setIsSharing(true);
       stream.getTracks().forEach((track) => track.onended = () => {
         clientRef.current?.emit("screen-ended", { sessionId: sessionRef.current });
         streamRef.current = null;
+        setIsSharing(false);
         closePeer();
         setStatus("Screen sharing stopped");
       });
@@ -217,18 +224,35 @@ export default function App() {
     });
   }
 
-  function sendCommand(command) {
+  function sendKey(key, action = "press") {
     if (!socket?.connected) return;
-    socket.emit("remote-command", {
-      sessionId: sessionId.trim().toUpperCase(),
-      command,
-    });
+    socket.emit("remote-key", { sessionId: sessionRef.current, key, action });
+  }
+
+  function toggleModifier(key) {
+    const isHeld = heldModifiers.includes(key);
+    sendKey(key, isHeld ? "up" : "down");
+    setHeldModifiers((previous) => isHeld ? previous.filter((modifier) => modifier !== key) : [...previous, key]);
+  }
+
+  function updateRemoteText(event) {
+    const next = event.target.value;
+    const previous = keyboardDraftRef.current;
+    let prefix = 0;
+    while (prefix < previous.length && prefix < next.length && previous[prefix] === next[prefix]) prefix += 1;
+    const removed = previous.length - prefix;
+    const inserted = next.slice(prefix);
+    for (let index = 0; index < removed; index += 1) sendKey("backspace");
+    if (inserted) socket?.emit("remote-text", { sessionId: sessionRef.current, text: inserted.slice(0, 500) });
+    keyboardDraftRef.current = next;
+    setKeyboardDraft(next);
   }
 
   function disconnect() {
     closePeer();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    setIsSharing(false);
     clientRef.current?.disconnect();
     clientRef.current = null;
     setConnecting(false);
@@ -237,20 +261,25 @@ export default function App() {
   }
 
   function sendPointer(event, action) {
+    const point = getPointerPosition(event);
+    if (action === "move") lastPointerRef.current = point;
+    if (!socket?.connected) return;
+    socket.emit("remote-pointer", { sessionId: sessionRef.current, action, ...point });
+  }
+
+  function getPointerPosition(event) {
     const video = videoRef.current;
     const rect = video?.getBoundingClientRect();
-    if (!rect || !video.videoWidth || !video.videoHeight || !socket?.connected) return;
+    if (!rect || !video.videoWidth || !video.videoHeight) return lastPointerRef.current;
     const scale = Math.min(rect.width / video.videoWidth, rect.height / video.videoHeight);
     const shownWidth = video.videoWidth * scale;
     const shownHeight = video.videoHeight * scale;
     const offsetX = (rect.width - shownWidth) / 2;
     const offsetY = (rect.height - shownHeight) / 2;
-    socket.emit("remote-pointer", {
-      sessionId: sessionRef.current,
-      action,
+    return {
       x: Math.max(0, Math.min(1, (event.clientX - rect.left - offsetX) / shownWidth)),
       y: Math.max(0, Math.min(1, (event.clientY - rect.top - offsetY) / shownHeight)),
-    });
+    };
   }
 
   return (
@@ -288,24 +317,88 @@ export default function App() {
           Status: <strong>{status}</strong>
         </p>
 
-        {hostMode && socket && <button className="connect share-screen" onClick={startScreenShare} disabled={!!streamRef.current}>Share this screen</button>}
+        {hostMode && socket && <button className="connect share-screen" onClick={startScreenShare} disabled={isSharing}>Share this screen</button>}
 
         {!hostMode && socket && <div className="screen-viewer">
-          <video ref={videoRef} autoPlay playsInline muted onPointerMove={(event) => sendPointer(event, "move")} onPointerUp={(event) => sendPointer(event, "click")} />
+          <video
+            ref={videoRef}
+            autoPlay
+            playsInline
+            muted
+            onPointerDown={(event) => {
+              event.currentTarget.setPointerCapture?.(event.pointerId);
+              if (event.button === 0) sendPointer(event, "down");
+            }}
+            onPointerMove={(event) => sendPointer(event, "move")}
+            onPointerUp={(event) => {
+              if (event.button === 0) sendPointer(event, "up");
+            }}
+            onPointerCancel={(event) => sendPointer(event, "up")}
+            onContextMenu={(event) => { event.preventDefault(); sendPointer(event, "right-click"); }}
+            onWheel={(event) => {
+              event.preventDefault();
+              socket.emit("remote-pointer", { sessionId: sessionRef.current, action: "scroll", y: -Math.sign(event.deltaY) * Math.max(1, Math.min(10, Math.round(Math.abs(event.deltaY) / 80))) });
+            }}
+          />
           {!hasVideo && <span>Waiting for the laptop screen…</span>}
         </div>}
 
+        {!hostMode && socket && <div className="pointer-controls" aria-label="Mouse controls">
+          <button onClick={() => sendPointer(lastPointerRef.current, "click")}>Left click</button>
+          <button onClick={() => sendPointer(lastPointerRef.current, "double-click")}>Double click</button>
+          <button onClick={() => sendPointer(lastPointerRef.current, "right-click")}>Right click</button>
+          <button onClick={() => socket.emit("remote-pointer", { sessionId: sessionRef.current, action: "scroll", y: 3 })}>Scroll up</button>
+          <button onClick={() => socket.emit("remote-pointer", { sessionId: sessionRef.current, action: "scroll", y: -3 })}>Scroll down</button>
+        </div>}
+
         {!hostMode && <div className="controls" aria-label="Remote commands">
-          <button disabled={!socket} onClick={() => sendCommand("ENTER")}>
+          <button disabled={!socket} onClick={() => sendKey("enter")}>
             <span className="key-icon" aria-hidden="true">↵</span> ENTER
           </button>
-          <button disabled={!socket} onClick={() => sendCommand("SPACE")}>
+          <button disabled={!socket} onClick={() => sendKey("space")}>
             <span className="key-icon space-icon" aria-hidden="true" /> SPACE
           </button>
-          <button disabled={!socket} onClick={() => sendCommand("ESC")}>
+          <button disabled={!socket} onClick={() => sendKey("esc")}>
             <span className="key-icon esc-icon" aria-hidden="true">⎋</span> ESC
           </button>
         </div>}
+
+        {!hostMode && socket && <section className="keyboard-panel" aria-label="Remote keyboard">
+          <h2>Keyboard</h2>
+          <label htmlFor="remoteText">Type on laptop</label>
+          <input
+            id="remoteText"
+            value={keyboardDraft}
+            onChange={(event) => { if (!event.nativeEvent.isComposing) updateRemoteText(event); }}
+            onCompositionEnd={updateRemoteText}
+            onKeyDown={(event) => {
+              const keys = { Enter: "enter", Tab: "tab", Escape: "esc", ArrowUp: "up", ArrowDown: "down", ArrowLeft: "left", ArrowRight: "right" };
+              if (keys[event.key]) {
+                event.preventDefault();
+                sendKey(keys[event.key]);
+              } else if (event.key === "Backspace" && !event.currentTarget.value) {
+                event.preventDefault();
+                sendKey("backspace");
+              } else if (event.key === "Delete") {
+                event.preventDefault();
+                sendKey("delete");
+              }
+            }}
+            placeholder="Tap here and type…"
+            autoComplete="off"
+            autoCapitalize="off"
+            spellCheck="false"
+          />
+          <div className="keyboard-keys">
+            {["tab", "backspace", "delete", "insert", "home", "end", "pageup", "pagedown", "up", "down", "left", "right", "capslock", "numlock", "pause", "printscreen", "f1", "f2", "f3", "f4", "f5", "f6", "f7", "f8", "f9", "f10", "f11", "f12"].map((key) => (
+              <button key={key} onClick={() => sendKey(key)}>{key === "pageup" ? "PgUp" : key === "pagedown" ? "PgDn" : key.toUpperCase()}</button>
+            ))}
+            {["shift", "ctrl", "alt"].map((key) => (
+              <button key={key} className={heldModifiers.includes(key) ? "modifier active" : "modifier"} aria-pressed={heldModifiers.includes(key)} onClick={() => toggleModifier(key)}>{key.toUpperCase()}</button>
+            ))}
+            <button onClick={() => { keyboardDraftRef.current = ""; setKeyboardDraft(""); }}>Clear typing</button>
+          </div>
+        </section>}
 
         {!hostMode && <div className="activity-panel">
           <h2>Gemini activity</h2>

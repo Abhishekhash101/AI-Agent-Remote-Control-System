@@ -21,6 +21,17 @@ ALLOWED_COMMANDS = {
     "ESC": "esc",
     "BACKSPACE": "backspace",
 }
+ALLOWED_KEYS = {
+    "enter": "enter", "space": "space", "esc": "esc", "backspace": "backspace",
+    "tab": "tab", "delete": "delete", "insert": "insert", "up": "up", "down": "down",
+    "left": "left", "right": "right", "home": "home", "end": "end",
+    "pageup": "pageup", "pagedown": "pagedown", "shift": "shift", "ctrl": "ctrl",
+    "alt": "alt", "win": "win", "capslock": "capslock", "numlock": "numlock",
+    "pause": "pause", "printscreen": "printscreen",
+    **{f"f{i}": f"f{i}" for i in range(1, 13)},
+}
+held_modifiers = set()
+held_mouse_buttons = set()
 
 @sio.event
 def connect():
@@ -34,6 +45,7 @@ def connect_error(data):
 @sio.event
 def disconnect(reason=None):
     print("Disconnected from server:", reason)
+    release_modifiers()
 
 @sio.on("session-created")
 def session_created(data):
@@ -73,18 +85,86 @@ def execute_command(data):
 @sio.on("execute-pointer")
 def execute_pointer(data):
     action = data.get("action")
+    if action == "scroll":
+        amount = data.get("amount")
+        if isinstance(amount, int) and -10 <= amount <= 10:
+            try:
+                pyautogui.scroll(amount)
+            except Exception as error:
+                print("Could not execute scroll:", repr(error))
+        return
     x, y = data.get("x"), data.get("y")
-    if action not in {"move", "click"} or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+    if action not in {"move", "down", "up", "click", "right-click", "double-click"} or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
         return
     try:
         width, height = pyautogui.size()
         point = (round(max(0, min(1, x)) * (width - 1)), round(max(0, min(1, y)) * (height - 1)))
         if action == "click":
             pyautogui.click(*point)
+        elif action == "down":
+            pyautogui.moveTo(*point, _pause=False)
+            pyautogui.mouseDown(*point)
+            held_mouse_buttons.add("left")
+        elif action == "up":
+            pyautogui.moveTo(*point, _pause=False)
+            pyautogui.mouseUp(*point)
+            held_mouse_buttons.discard("left")
+        elif action == "right-click":
+            pyautogui.click(*point, button="right")
+        elif action == "double-click":
+            pyautogui.doubleClick(*point)
         else:
             pyautogui.moveTo(*point, _pause=False)
     except Exception as error:
         print("Could not execute pointer input:", repr(error))
+
+@sio.on("execute-key")
+def execute_key(data):
+    key = data.get("key")
+    action = data.get("action", "press")
+    if key not in ALLOWED_KEYS or action not in {"press", "down", "up"}:
+        return
+    if action != "press" and key not in {"shift", "ctrl", "alt", "win"}:
+        return
+    try:
+        if action == "down":
+            pyautogui.keyDown(ALLOWED_KEYS[key])
+            held_modifiers.add(key)
+        elif action == "up":
+            pyautogui.keyUp(ALLOWED_KEYS[key])
+            held_modifiers.discard(key)
+        else:
+            pyautogui.press(ALLOWED_KEYS[key])
+    except Exception as error:
+        print("Could not execute key:", repr(error))
+
+@sio.on("execute-text")
+def execute_text(data):
+    text = data.get("text", "")
+    if not isinstance(text, str) or len(text) > 500:
+        return
+    try:
+        pyautogui.write(text, interval=0)
+    except Exception as error:
+        print("Could not type text (only keyboard-supported characters may work):", repr(error))
+
+@sio.on("phone-disconnected")
+def phone_disconnected():
+    release_modifiers()
+
+def release_modifiers():
+    for key in tuple(held_modifiers):
+        try:
+            pyautogui.keyUp(ALLOWED_KEYS[key])
+        except Exception:
+            pass
+        held_modifiers.discard(key)
+    for button in tuple(held_mouse_buttons):
+        try:
+            pyautogui.mouseUp(button=button)
+        except Exception:
+            pass
+        held_mouse_buttons.discard(button)
 
 
 def watch_gemini_log():

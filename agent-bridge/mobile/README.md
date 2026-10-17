@@ -19,9 +19,11 @@ If you are developing a production application, we recommend using TypeScript wi
 The phone joins the session ID printed by `laptop/laptop_client.py`. For desktop
 screen sharing, open the web app on the laptop with `?mode=host`, enter that
 same ID, connect, then choose **Share this screen** and select the display or
-window. On the phone, open the regular app, join the same ID, and touch or drag
-the preview to move/click the laptop pointer. The existing Enter, Space, and
-Esc buttons remain available.
+window. On the phone, open the regular app and join the same ID. Touch the
+preview to click, hold and drag to drag, or use the mouse controls to left-click,
+right-click, double-click, and scroll. The keyboard field opens the phone
+keyboard and sends typed text to the laptop; the extra keys and Shift/Ctrl/Alt
+buttons cover navigation and shortcuts. Keep the laptop client running.
 
 Screen capture requires browser permission and a secure context (HTTPS, or
 `localhost`). When testing on the LAN, run the host page on the laptop at

@@ -196,3 +196,34 @@ footer span { margin: 0 7px; color: #2ca88e; }
   user-select: none;
 }
 .screen-viewer span { position: absolute; pointer-events: none; }
+
+.pointer-controls,
+.keyboard-keys {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 7px;
+  margin-top: 10px;
+}
+.pointer-controls button,
+.keyboard-keys button {
+  min-height: 40px;
+  padding: 5px 7px;
+  border-color: #344153;
+  color: #cbd6e3;
+  background: #1b2735;
+  font-size: 11px;
+}
+.keyboard-panel {
+  margin-top: 20px;
+  padding-top: 17px;
+  border-top: 1px solid #25313f;
+}
+.keyboard-panel h2 { margin: 0 0 12px; font-size: 14px; }
+.keyboard-panel label { margin-bottom: 8px; }
+.keyboard-panel input { margin-bottom: 2px; }
+.keyboard-keys { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.keyboard-keys button.modifier.active {
+  border-color: #2ebc9d;
+  color: #d9fff4;
+  background: #164c43;
+}
