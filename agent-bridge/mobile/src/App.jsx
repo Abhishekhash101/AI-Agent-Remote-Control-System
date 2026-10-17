@@ -34,6 +34,13 @@ export default function App() {
   const keyboardDraftRef = useRef("");
   const lastPointerRef = useRef({ x: 0.5, y: 0.5 });
   const codexAutoStarted = useRef(false);
+  const transcriptEndRef = useRef(null);
+  const composerRef = useRef(null);
+
+  // Auto-scroll transcript to bottom whenever messages update or Codex starts typing
+  useEffect(() => {
+    transcriptEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [codexMessages, codexBusy, codexActivity]);
 
   function closePeer() {
     peerRef.current?.close();
@@ -583,26 +590,48 @@ export default function App() {
           })}
           <div className="codex-transcript" aria-live="polite">
             {codexMessages.length === 0
-              ? <p className="activity-empty">💬 Codex chat will appear here once connected.</p>
+              ? (
+                <p className="activity-empty">
+                  {codexThreadId
+                    ? (codexBusy ? "⏳ Codex is working…" : "💬 Send a message below to start")
+                    : "Start Codex above to begin chatting"}
+                </p>
+              )
               : codexMessages.map((message) => (
                 <article className={`codex-message ${message.role}`} key={message.id}>
-                  <strong>{message.role === "user" ? "🧑 You" : message.role === "tool" ? "🔧 Tool" : "🤖 Codex"}</strong>
+                  <div className="codex-msg-header">
+                    <span className="codex-role-badge">
+                      {message.role === "user" ? "🧑 You" : message.role === "tool" ? "🔧 Tool output" : "🤖 Codex"}
+                    </span>
+                  </div>
                   <pre>{message.text}</pre>
                 </article>
               ))
             }
+            {/* Typing indicator – shows while Codex is generating */}
+            {codexBusy && (
+              <div className="codex-typing-indicator" aria-label="Codex is typing">
+                <span className="codex-role-badge">🤖 Codex</span>
+                <div className="typing-dots">
+                  <span /><span /><span />
+                </div>
+                {codexActivity && <small className="typing-action">{codexActivity}</small>}
+              </div>
+            )}
+            {/* Scroll anchor */}
+            <div ref={transcriptEndRef} />
           </div>
-          <form className="codex-composer" onSubmit={sendCodexMessage}>
+          <form className="codex-composer" onSubmit={sendCodexMessage} ref={composerRef}>
             <textarea
               value={codexDraft}
               onChange={(event) => setCodexDraft(event.target.value)}
               onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendCodexMessage(event); } }}
-              placeholder={codexThreadId ? (codexBusy ? "Send Codex an update… (Enter to send)" : "Message Codex… (Enter to send)") : "Start Codex first ▲"}
+              placeholder={codexThreadId ? (codexBusy ? "Interrupt or steer Codex… (Enter)" : "Message Codex… (Enter to send)") : "▶ Start Codex above first"}
               disabled={!codexThreadId}
               rows={3}
             />
             <button type="submit" disabled={!codexThreadId || !codexDraft.trim()}>
-              {codexBusy ? "⚡ Send update" : "Send →"}
+              {codexBusy ? "⚡ Steer" : "Send →"}
             </button>
           </form>
         </section>}

@@ -373,3 +373,95 @@ footer span { margin: 0 7px; color: #2ca88e; }
   background: #351c24 !important;
   border-color: #65343d !important;
 }
+
+/* ── Chat bubbles & typing indicator ──────────────────────────────── */
+.codex-transcript {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-height: 420px;
+  overflow-y: auto;
+  margin-top: 14px;
+  padding-right: 2px;
+  scroll-behavior: smooth;
+}
+
+/* Override previous grid layout */
+.codex-msg-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 4px;
+}
+
+.codex-role-badge {
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .04em;
+  color: #748499;
+  text-transform: uppercase;
+}
+
+.codex-message.user  .codex-role-badge { color: #2ebc9d; }
+.codex-message.assistant .codex-role-badge { color: #7ea9f0; }
+.codex-message.tool  .codex-role-badge { color: #f0b77e; }
+
+/* Typing indicator bubble */
+.codex-typing-indicator {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  padding: 10px 12px;
+  border: 1px solid #2d3d4f;
+  border-radius: 10px;
+  background: #0d1825;
+  animation: fadeIn .25s ease;
+}
+
+.typing-dots {
+  display: flex;
+  gap: 5px;
+  align-items: center;
+  height: 16px;
+}
+
+.typing-dots span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #2ebc9d;
+  animation: bounce-dot 1.3s ease-in-out infinite;
+}
+.typing-dots span:nth-child(2) { animation-delay: .18s; }
+.typing-dots span:nth-child(3) { animation-delay: .36s; }
+
+@keyframes bounce-dot {
+  0%, 80%, 100% { transform: translateY(0);   opacity: .4; }
+  40%            { transform: translateY(-6px); opacity: 1; }
+}
+
+.typing-action {
+  color: #5ee4c2;
+  font-size: 10px;
+  font-style: italic;
+  opacity: .8;
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(4px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+/* User message bubble */
+.codex-message.user {
+  align-self: flex-end;
+  border-color: #1e6657;
+  background: #0e3329;
+}
+
+/* Assistant message bubble */
+.codex-message.assistant {
+  border-color: #2a3a55;
+  background: #0d1a2e;
+}
+.codex-message.assistant .codex-role-badge { color: #7ea9f0; }
