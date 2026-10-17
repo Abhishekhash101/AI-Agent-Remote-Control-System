@@ -41,7 +41,7 @@ export default function App() {
       });
     };
     peer.onconnectionstatechange = () => {
-      if (["failed", "disconnected", "closed"].includes(peer.connectionState)) {
+      if (["failed", "disconnected"].includes(peer.connectionState)) {
         setStatus("Screen connection interrupted");
       }
     };
@@ -67,6 +67,7 @@ export default function App() {
       streamRef.current = stream;
       stream.getTracks().forEach((track) => track.onended = () => {
         clientRef.current?.emit("screen-ended", { sessionId: sessionRef.current });
+        streamRef.current = null;
         closePeer();
         setStatus("Screen sharing stopped");
       });
@@ -118,11 +119,21 @@ export default function App() {
     client.on("screen-phone-ready", async () => {
       phoneReadyRef.current = true;
       if (!hostMode || !streamRef.current) return;
-      const peer = peerRef.current || makePeer();
-      if (!peer.getSenders().length) streamRef.current.getTracks().forEach((track) => peer.addTrack(track, streamRef.current));
-      await sendScreenOffer(peer);
+      try {
+        const peer = peerRef.current || makePeer();
+        if (!peer.getSenders().length) streamRef.current.getTracks().forEach((track) => peer.addTrack(track, streamRef.current));
+        await sendScreenOffer(peer);
+      } catch (error) {
+        setStatus(`Could not start screen connection: ${error.message}`);
+      }
     });
-    client.on("screen-phone-left", () => { phoneReadyRef.current = false; closePeer(); setStatus("Phone disconnected · waiting to reconnect"); });
+    client.on("screen-phone-left", () => {
+      phoneReadyRef.current = false;
+      closePeer();
+      if (videoRef.current) videoRef.current.srcObject = null;
+      setHasVideo(false);
+      setStatus("Phone disconnected · waiting to reconnect");
+    });
     client.on("screen-signal", async (signal) => {
       try {
         let peer = peerRef.current;
@@ -153,7 +164,14 @@ export default function App() {
       setHasVideo(false);
       setStatus("Laptop screen sharing stopped");
     });
-    client.on("screen-error", (data) => setStatus(data?.message || "Could not open screen host"));
+    const rejectJoin = (message) => {
+      setStatus(message);
+      setConnecting(false);
+      setSocket(null);
+      clientRef.current = null;
+      client.disconnect();
+    };
+    client.on("screen-error", (data) => rejectJoin(data?.message || "Could not open screen host"));
     client.on("agent-activity", (activity) => {
       setActivities((previous) => [
         {
@@ -164,10 +182,7 @@ export default function App() {
       ].slice(0, 30));
     });
     client.on("join-error", (data) => {
-      setStatus(data?.message || "Connection failed");
-      setConnecting(false);
-      clientRef.current = null;
-      client.disconnect();
+      rejectJoin(data?.message || "Connection failed");
     });
     client.on("command-forwarded", ({ command }) => {
       setStatus(`${command} sent`);
@@ -189,6 +204,7 @@ export default function App() {
       setStatus("Connection lost. Reconnecting...");
     });
     client.on("disconnect", (reason) => {
+      if (reason === "io client disconnect") return;
       if (reason === "io server disconnect") {
         setConnecting(false);
         setSocket(null);

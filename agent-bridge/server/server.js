@@ -1,6 +1,7 @@
 const express = require("express")
 const http = require("http")
 const cors = require("cors")
+const crypto = require("crypto")
 const { Server } = require("socket.io")
 
 const app = express();
@@ -60,12 +61,15 @@ io.on('connection', (socket) => {
         session.screenHost = socket.id;
         socket.join(sessionId);
         socket.emit("screen-host-joined", { sessionId });
-        if (session.phone) io.to(session.phone).emit("screen-host-available");
+        if (session.phone) {
+            io.to(session.phone).emit("screen-host-available");
+            io.to(socket.id).emit("screen-phone-ready");
+        }
     });
 
 
     //phone connection joins 
-    socket.on("join-session", ({ sessionId }) => {
+    socket.on("join-session", ({ sessionId } = {}) => {
         const session = sessions.get(sessionId);
         if (!session) {
             socket.emit("join-error", {
@@ -184,11 +188,11 @@ io.on('connection', (socket) => {
 });
 
 function generateSessionId() {
-
-    return Math.random()
-        .toString(36)
-        .substring(2, 8)
-        .toUpperCase();
+    let sessionId;
+    do {
+        sessionId = crypto.randomBytes(6).toString("hex").toUpperCase();
+    } while (sessions.has(sessionId));
+    return sessionId;
 }
 
 
