@@ -71,7 +71,7 @@ class CodexAppServer:
                 self.thread_id = thread.get("id") or saved_thread_id
                 return {"threadId": self.thread_id, "cwd": self.cwd}
             except Exception as error:
-                self.on_error(f"Could not resume saved Codex thread; starting a new thread: {error}")
+                print(f"Could not resume saved Codex thread; starting a new thread: {error}")
 
         result = self.request("thread/start", {"cwd": self.cwd}, timeout=60)
         thread = result.get("thread") or {}

@@ -286,6 +286,14 @@ export default function App() {
       clientRef.current = null;
       client.disconnect();
     });
+    client.on("laptop-reconnecting", () => {
+      setStatus("Laptop connection interrupted · waiting for it to reconnect…");
+    });
+    client.on("laptop-reconnected", () => {
+      setStatus("Connected");
+      setCodexStatus("Restoring Codex session…");
+      client.emit("codex-start", { sessionId: sessionRef.current });
+    });
     client.on("connect_error", (error) => {
       setStatus(`Connecting to server: ${error.message}`);
     });

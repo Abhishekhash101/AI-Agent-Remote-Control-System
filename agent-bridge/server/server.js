@@ -19,6 +19,7 @@ const io = new Server(server, {
 //storage of active sessions
 
 const sessions = new Map();
+const LAPTOP_RECONNECT_GRACE_MS = 60000;
 
 app.get('/', (req, res) => {
     res.json({
@@ -31,12 +32,28 @@ io.on('connection', (socket) => {
     console.log("Client connected...", socket.id);
 
     //laptop create a session
-    socket.on("create-session", () => {
+    socket.on("create-session", ({ sessionId: previousSessionId } = {}) => {
+        const existing = sessions.get(previousSessionId);
+        if (existing && !existing.laptop && existing.laptopReconnectTimer) {
+            clearTimeout(existing.laptopReconnectTimer);
+            existing.laptopReconnectTimer = null;
+            existing.laptop = socket.id;
+            socket.join(previousSessionId);
+            socket.emit("session-created", { sessionId: previousSessionId, resumed: true });
+            if (existing.phone) {
+                io.to(existing.phone).emit("laptop-reconnected");
+                io.to(socket.id).emit("phone-connected");
+            }
+            console.log(`Laptop reconnected to session: ${previousSessionId}`);
+            return;
+        }
+
         const sessionId = generateSessionId();
         sessions.set(sessionId, {
             laptop: socket.id,
             phone: null,
-            screenHost: null
+            screenHost: null,
+            laptopReconnectTimer: null,
         });
 
         socket.join(sessionId)
@@ -270,11 +287,14 @@ io.on('connection', (socket) => {
         for (const [sessionId, session] of sessions.entries()) {
 
             if (session.laptop === socket.id) {
-                if (session.phone) {
-                    io.to(session.phone).emit("laptop-disconnected");
-                }
-                sessions.delete(sessionId);
-                console.log(`Session removed: ${sessionId}`);
+                session.laptop = null;
+                if (session.phone) io.to(session.phone).emit("laptop-reconnecting");
+                session.laptopReconnectTimer = setTimeout(() => {
+                    if (session.laptop !== null) return;
+                    if (session.phone) io.to(session.phone).emit("laptop-disconnected");
+                    sessions.delete(sessionId);
+                    console.log(`Session removed after reconnect timeout: ${sessionId}`);
+                }, LAPTOP_RECONNECT_GRACE_MS);
             } else if (session.phone === socket.id) {
                 session.phone = null;
                 io.to(session.laptop).emit("phone-disconnected");

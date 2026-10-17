@@ -19,6 +19,7 @@ project_root = Path(__file__).resolve().parent.parent
 codex_app = None
 codex_lock = threading.Lock()
 codex_thread_starting = False
+pyautogui_lock = threading.Lock()
 
 ALLOWED_COMMANDS = {
     "ENTER": "enter",
@@ -41,7 +42,7 @@ held_mouse_buttons = set()
 @sio.event
 def connect():
     print("Connected to AgentBridge server.")
-    sio.emit("create-session")
+    sio.emit("create-session", {"sessionId": session_id})
 
 @sio.event
 def connect_error(data):
@@ -73,8 +74,7 @@ def session_created(data):
 def phone_connected():
     print("Phone connected!")
     if codex_app:
-        if codex_app.thread_id:
-            emit_codex_thread(codex_app)
+        threading.Thread(target=start_codex_thread, daemon=True).start()
         for approval in codex_app.pending_approvals():
             emit_codex_approval(approval)
 
@@ -87,7 +87,8 @@ def execute_command(data):
         return
 
     try:
-        pyautogui.press(ALLOWED_COMMANDS[command])
+        with pyautogui_lock:
+            pyautogui.press(ALLOWED_COMMANDS[command])
         print("Executed command:", command)
     except Exception as error:
         print("Could not execute command:", repr(error))
@@ -99,7 +100,8 @@ def execute_pointer(data):
         amount = data.get("amount")
         if isinstance(amount, int) and -10 <= amount <= 10:
             try:
-                pyautogui.scroll(amount)
+                with pyautogui_lock:
+                    pyautogui.scroll(amount)
             except Exception as error:
                 print("Could not execute scroll:", repr(error))
         return
@@ -107,24 +109,25 @@ def execute_pointer(data):
     if action not in {"move", "down", "up", "click", "right-click", "double-click"} or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
         return
     try:
-        width, height = pyautogui.size()
-        point = (round(max(0, min(1, x)) * (width - 1)), round(max(0, min(1, y)) * (height - 1)))
-        if action == "click":
-            pyautogui.click(*point)
-        elif action == "down":
-            pyautogui.moveTo(*point, _pause=False)
-            pyautogui.mouseDown(*point)
-            held_mouse_buttons.add("left")
-        elif action == "up":
-            pyautogui.moveTo(*point, _pause=False)
-            pyautogui.mouseUp(*point)
-            held_mouse_buttons.discard("left")
-        elif action == "right-click":
-            pyautogui.click(*point, button="right")
-        elif action == "double-click":
-            pyautogui.doubleClick(*point)
-        else:
-            pyautogui.moveTo(*point, _pause=False)
+        with pyautogui_lock:
+            width, height = pyautogui.size()
+            point = (round(max(0, min(1, x)) * (width - 1)), round(max(0, min(1, y)) * (height - 1)))
+            if action == "click":
+                pyautogui.click(*point)
+            elif action == "down":
+                pyautogui.moveTo(*point, _pause=False)
+                pyautogui.mouseDown(*point)
+                held_mouse_buttons.add("left")
+            elif action == "up":
+                pyautogui.moveTo(*point, _pause=False)
+                pyautogui.mouseUp(*point)
+                held_mouse_buttons.discard("left")
+            elif action == "right-click":
+                pyautogui.click(*point, button="right")
+            elif action == "double-click":
+                pyautogui.doubleClick(*point)
+            else:
+                pyautogui.moveTo(*point, _pause=False)
     except Exception as error:
         print("Could not execute pointer input:", repr(error))
 
@@ -137,14 +140,15 @@ def execute_key(data):
     if action != "press" and key not in {"shift", "ctrl", "alt", "win"}:
         return
     try:
-        if action == "down":
-            pyautogui.keyDown(ALLOWED_KEYS[key])
-            held_modifiers.add(key)
-        elif action == "up":
-            pyautogui.keyUp(ALLOWED_KEYS[key])
-            held_modifiers.discard(key)
-        else:
-            pyautogui.press(ALLOWED_KEYS[key])
+        with pyautogui_lock:
+            if action == "down":
+                pyautogui.keyDown(ALLOWED_KEYS[key])
+                held_modifiers.add(key)
+            elif action == "up":
+                pyautogui.keyUp(ALLOWED_KEYS[key])
+                held_modifiers.discard(key)
+            else:
+                pyautogui.press(ALLOWED_KEYS[key])
     except Exception as error:
         print("Could not execute key:", repr(error))
 
@@ -154,7 +158,8 @@ def execute_text(data):
     if not isinstance(text, str) or len(text) > 500:
         return
     try:
-        pyautogui.write(text, interval=0)
+        with pyautogui_lock:
+            pyautogui.write(text, interval=0)
     except Exception as error:
         print("Could not type text (only keyboard-supported characters may work):", repr(error))
 
@@ -163,18 +168,19 @@ def phone_disconnected():
     release_modifiers()
 
 def release_modifiers():
-    for key in tuple(held_modifiers):
-        try:
-            pyautogui.keyUp(ALLOWED_KEYS[key])
-        except Exception:
-            pass
-        held_modifiers.discard(key)
-    for button in tuple(held_mouse_buttons):
-        try:
-            pyautogui.mouseUp(button=button)
-        except Exception:
-            pass
-        held_mouse_buttons.discard(button)
+    with pyautogui_lock:
+        for key in tuple(held_modifiers):
+            try:
+                pyautogui.keyUp(ALLOWED_KEYS[key])
+            except Exception:
+                pass
+            held_modifiers.discard(key)
+        for button in tuple(held_mouse_buttons):
+            try:
+                pyautogui.mouseUp(button=button)
+            except Exception:
+                pass
+            held_mouse_buttons.discard(button)
 
 
 def emit_codex_event(payload):
