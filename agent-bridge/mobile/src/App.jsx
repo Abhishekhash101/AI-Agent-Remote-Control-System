@@ -33,6 +33,7 @@ export default function App() {
   const phoneReadyRef = useRef(false);
   const keyboardDraftRef = useRef("");
   const lastPointerRef = useRef({ x: 0.5, y: 0.5 });
+  const codexAutoStarted = useRef(false);
 
   function closePeer() {
     peerRef.current?.close();
@@ -131,8 +132,9 @@ export default function App() {
       setConnecting(false);
       setStatus(hostMode ? "Host connected · start screen sharing" : "Connected");
       setSocket(client);
-      if (!hostMode) {
-        setCodexStatus("Restoring Codex session…");
+      if (!hostMode && !codexAutoStarted.current) {
+        codexAutoStarted.current = true;
+        setCodexStatus("Starting Codex on laptop…");
         client.emit("codex-start", { sessionId: normalizedSessionId });
       }
     };
@@ -321,7 +323,10 @@ export default function App() {
 
   function startCodex() {
     if (!socket?.connected) return;
-    setCodexStatus("Starting local Codex App Server…");
+    setCodexStatus("Starting Codex on laptop…");
+    setCodexThreadId("");
+    setCodexMessages([]);
+    setCodexApprovals([]);
     socket.emit("codex-start", { sessionId: sessionRef.current });
   }
 
@@ -540,37 +545,65 @@ export default function App() {
         {!hostMode && socket && <section className="codex-panel" aria-label="Codex remote session">
           <div className="codex-heading">
             <div>
-              <h2>Codex on this laptop</h2>
-              <p>{codexStatus}</p>
+              <h2>⚡ Codex on this laptop</h2>
+              <p className={codexStatus.toLowerCase().includes("error") || codexStatus.toLowerCase().includes("fail") ? "codex-status-error" : "codex-status-ok"}>
+                {codexStatus}
+              </p>
             </div>
-            {!codexThreadId && <button className="codex-start" onClick={startCodex}>Start Codex</button>}
+            <div className="codex-controls">
+              {!codexThreadId
+                ? <button className="codex-start" onClick={startCodex}>▶ Start Codex</button>
+                : <button className="codex-restart" onClick={startCodex} title="Restart Codex">↺ Restart</button>
+              }
+            </div>
           </div>
-          {codexThreadId && <small className="codex-workspace">Thread {codexThreadId}</small>}
-          {codexActivity && <p className="codex-live-activity" role="status">{codexActivity}</p>}
+          {codexThreadId && <small className="codex-workspace">🧵 Thread: {codexThreadId.slice(0, 16)}…</small>}
+          {codexActivity && (
+            <p className="codex-live-activity" role="status">
+              <span className="codex-spinner">⏳</span> {codexActivity}
+            </p>
+          )}
+          {!codexThreadId && !codexStatus.toLowerCase().includes("starting") && (
+            <p className="codex-hint">
+              Tap <strong>▶ Start Codex</strong> to launch the AI coding agent on your laptop.
+            </p>
+          )}
           {codexApprovals.map((approval) => {
             const params = approval.params || {};
             const detail = params.command || params.reason || Object.keys(params.fileChanges || {}).join(", ") || approval.method;
             return <article className="codex-approval" key={String(approval.requestId)}>
-              <strong>{approval.method.includes("fileChange") ? "File change approval" : "Command approval"}</strong>
+              <strong>{approval.method.includes("fileChange") ? "📄 File change" : "💻 Command approval"}</strong>
               <code>{String(detail).slice(0, 700)}</code>
-              {params.cwd && <small>Directory: {params.cwd}</small>}
+              {params.cwd && <small>📁 {params.cwd}</small>}
               <div>
-                <button onClick={() => respondToCodexApproval(approval, "accept")}>Approve once</button>
-                <button onClick={() => respondToCodexApproval(approval, "decline")}>Decline</button>
+                <button className="approve-btn" onClick={() => respondToCodexApproval(approval, "accept")}>✅ Approve</button>
+                <button className="decline-btn" onClick={() => respondToCodexApproval(approval, "decline")}>❌ Decline</button>
               </div>
             </article>;
           })}
           <div className="codex-transcript" aria-live="polite">
-            {codexMessages.length === 0 ? <p className="activity-empty">Start a Codex thread to chat with the agent running on this laptop.</p> : codexMessages.map((message) => (
-              <article className={`codex-message ${message.role}`} key={message.id}>
-                <strong>{message.role === "user" ? "You" : message.role === "tool" ? "Tool output" : "Codex"}</strong>
-                <pre>{message.text}</pre>
-              </article>
-            ))}
+            {codexMessages.length === 0
+              ? <p className="activity-empty">💬 Codex chat will appear here once connected.</p>
+              : codexMessages.map((message) => (
+                <article className={`codex-message ${message.role}`} key={message.id}>
+                  <strong>{message.role === "user" ? "🧑 You" : message.role === "tool" ? "🔧 Tool" : "🤖 Codex"}</strong>
+                  <pre>{message.text}</pre>
+                </article>
+              ))
+            }
           </div>
           <form className="codex-composer" onSubmit={sendCodexMessage}>
-            <textarea value={codexDraft} onChange={(event) => setCodexDraft(event.target.value)} placeholder={codexThreadId ? (codexBusy ? "Send Codex an update…" : "Message Codex…") : "Start Codex first"} disabled={!codexThreadId} rows={3} />
-            <button type="submit" disabled={!codexThreadId || !codexDraft.trim()}>{codexBusy ? "Send update" : "Send"}</button>
+            <textarea
+              value={codexDraft}
+              onChange={(event) => setCodexDraft(event.target.value)}
+              onKeyDown={(event) => { if (event.key === "Enter" && !event.shiftKey) { event.preventDefault(); sendCodexMessage(event); } }}
+              placeholder={codexThreadId ? (codexBusy ? "Send Codex an update… (Enter to send)" : "Message Codex… (Enter to send)") : "Start Codex first ▲"}
+              disabled={!codexThreadId}
+              rows={3}
+            />
+            <button type="submit" disabled={!codexThreadId || !codexDraft.trim()}>
+              {codexBusy ? "⚡ Send update" : "Send →"}
+            </button>
           </form>
         </section>}
 

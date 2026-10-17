@@ -306,3 +306,70 @@ footer span { margin: 0 7px; color: #2ca88e; }
 }
 .codex-composer textarea:focus { border-color: #2ebc9d; box-shadow: 0 0 0 3px rgba(46, 188, 157, .12); }
 .codex-composer button:disabled { opacity: .45; cursor: not-allowed; }
+
+/* ── New Codex UI additions ─────────────────────────────────────── */
+.codex-controls {
+  display: flex;
+  flex-shrink: 0;
+  gap: 6px;
+}
+
+.codex-start {
+  background: linear-gradient(135deg, #1a7a65, #0f5a4a) !important;
+  border-color: #2ebc9d !important;
+  box-shadow: 0 4px 14px rgba(46, 188, 157, .25);
+  font-weight: 700 !important;
+  letter-spacing: .02em;
+}
+.codex-start:hover { filter: brightness(1.15) !important; transform: translateY(-1px); }
+
+.codex-restart {
+  width: auto;
+  min-height: 34px;
+  padding: 0 10px;
+  font-size: 12px;
+  font-weight: 600;
+  color: #91a0b2;
+  background: #151f2b;
+  border: 1px solid #2d3d4f;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: color .15s, border-color .15s;
+}
+.codex-restart:hover { color: #5ee4c2; border-color: #2ebc9d; }
+
+.codex-status-ok  { color: #5ee4c2 !important; }
+.codex-status-error { color: #ff8a95 !important; }
+
+.codex-hint {
+  margin: 10px 0 0;
+  padding: 10px 12px;
+  border: 1px dashed #2d3d4f;
+  border-radius: 8px;
+  color: #748499;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.codex-hint strong { color: #5ee4c2; }
+
+@keyframes pulse-spin {
+  0%   { transform: rotate(0deg);   opacity: 1; }
+  50%  { transform: rotate(180deg); opacity: .6; }
+  100% { transform: rotate(360deg); opacity: 1; }
+}
+.codex-spinner {
+  display: inline-block;
+  animation: pulse-spin 1.5s linear infinite;
+  margin-right: 4px;
+}
+
+.approve-btn {
+  color: #d9fff4 !important;
+  background: #164c43 !important;
+  border-color: #246e60 !important;
+}
+.decline-btn {
+  color: #ffb8bd !important;
+  background: #351c24 !important;
+  border-color: #65343d !important;
+}

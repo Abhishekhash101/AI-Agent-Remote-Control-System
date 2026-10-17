@@ -1,4 +1,5 @@
 
+import shutil
 import threading
 import time
 from pathlib import Path
@@ -9,8 +10,6 @@ from codex_app_server import CodexAppServer
 
 SERVER_URL = "https://agentbridge-server.onrender.com"
 
-# Prefer WebSocket transport to avoid Render.com cold-start HTTP polling failures.
-# Reconnection uses exponential back-off (1s → 60s cap).
 sio = socketio.Client(
     reconnection=True,
     reconnection_attempts=0,
@@ -46,6 +45,21 @@ ALLOWED_KEYS = {
 held_modifiers = set()
 held_mouse_buttons = set()
 
+
+# ── Safe emit: never crashes if socket is disconnected ───────────────────────
+
+def safe_emit(event, data):
+    """Emit only when the socket is actually connected. Prints a warning otherwise."""
+    try:
+        if sio.connected:
+            sio.emit(event, data)
+        else:
+            print(f"[offline] could not emit '{event}' – socket not connected")
+    except Exception as err:
+        print(f"[emit error] {event}: {err}")
+
+
+# ── Socket events ────────────────────────────────────────────────────────────
 
 @sio.event
 def connect():
@@ -176,7 +190,7 @@ def execute_text(data):
         with pyautogui_lock:
             pyautogui.write(text, interval=0)
     except Exception as error:
-        print("Could not type text (only keyboard-supported characters may work):", repr(error))
+        print("Could not type text:", repr(error))
 
 
 @sio.on("phone-disconnected")
@@ -204,17 +218,19 @@ def release_modifiers():
 
 def emit_codex_event(payload):
     if session_id:
-        sio.emit("codex-event", {"sessionId": session_id, "event": payload})
+        safe_emit("codex-event", {"sessionId": session_id, "event": payload})
 
 
 def emit_codex_approval(payload):
     if session_id:
-        sio.emit("codex-approval", {"sessionId": session_id, **payload})
+        safe_emit("codex-approval", {"sessionId": session_id, **payload})
 
 
 def emit_codex_error(message):
+    msg = str(message)[:1000]
+    print("[Codex error]", msg)
     if session_id:
-        sio.emit("codex-error", {"sessionId": session_id, "message": str(message)[:1000]})
+        safe_emit("codex-error", {"sessionId": session_id, "message": msg})
 
 
 def start_codex_thread():
@@ -224,14 +240,29 @@ def start_codex_thread():
             return
         codex_thread_starting = True
     try:
+        # Check that the codex binary actually exists before attempting to start
+        codex_bin = shutil.which("codex")
+        if not codex_bin:
+            emit_codex_error(
+                "codex binary not found. Install it with: npm install -g @openai/codex"
+            )
+            return
+
+        print("Starting Codex App Server...")
         with codex_lock:
             if codex_app is None:
-                codex_app = CodexAppServer(emit_codex_event, emit_codex_approval, emit_codex_error)
+                codex_app = CodexAppServer(
+                    emit_codex_event, emit_codex_approval, emit_codex_error
+                )
             adapter = codex_app
+
         result = adapter.start_thread(project_root)
-        sio.emit("codex-thread-ready", {"sessionId": session_id, **result})
+        print("Codex thread ready:", result.get("threadId"))
+
+        safe_emit("codex-thread-ready", {"sessionId": session_id, **result})
+
         messages = adapter.read_history()
-        sio.emit("codex-history", {
+        safe_emit("codex-history", {
             "sessionId": session_id,
             "messages": messages,
             "busy": bool(adapter.active_turn_id),
@@ -247,6 +278,7 @@ def start_codex_thread():
 def codex_start(data):
     if not session_id or data.get("sessionId") != session_id:
         return
+    print("Phone requested Codex start.")
     threading.Thread(target=start_codex_thread, daemon=True).start()
 
 
@@ -266,7 +298,7 @@ def codex_send(data):
 def _send_codex_message(adapter, text):
     try:
         adapter.send_message(text)
-        sio.emit("codex-turn-accepted", {"sessionId": session_id})
+        safe_emit("codex-turn-accepted", {"sessionId": session_id})
     except Exception as error:
         emit_codex_error(error)
 
@@ -286,17 +318,14 @@ def codex_approval_decision(data):
         emit_codex_error(error)
 
 
-# ── Connection ───────────────────────────────────────────────────────────────
+# ── Connection with retry ────────────────────────────────────────────────────
 
 def _connect_with_retry():
-    """Connect with exponential back-off to handle Render.com cold-start drops."""
     INITIAL_WAIT = 5
     MAX_WAIT     = 60
     MAX_ATTEMPTS = 10
-
     wait    = INITIAL_WAIT
     attempt = 0
-
     while True:
         try:
             sio.connect(SERVER_URL, transports=["websocket"], wait_timeout=30)
@@ -308,13 +337,10 @@ def _connect_with_retry():
                 print(f"Server waking up (attempt {attempt}/{MAX_ATTEMPTS}). Retrying in {wait}s...")
             else:
                 print(f"Connection attempt {attempt}/{MAX_ATTEMPTS} failed: {error_text}")
-
             if attempt >= MAX_ATTEMPTS:
                 raise RuntimeError(
-                    f"Could not connect after {MAX_ATTEMPTS} attempts. "
-                    "Check your internet connection."
+                    f"Could not connect after {MAX_ATTEMPTS} attempts."
                 ) from error
-
             time.sleep(wait)
             wait = min(wait * 2, MAX_WAIT)
 
