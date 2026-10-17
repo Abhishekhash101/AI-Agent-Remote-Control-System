@@ -23,6 +23,7 @@ export default function App() {
   const [codexApprovals, setCodexApprovals] = useState([]);
   const [codexBusy, setCodexBusy] = useState(false);
   const [codexStatus, setCodexStatus] = useState("Codex is not connected");
+  const [codexActivity, setCodexActivity] = useState("");
   const clientRef = useRef(null);
   const peerRef = useRef(null);
   const streamRef = useRef(null);
@@ -110,6 +111,10 @@ export default function App() {
       setStatus("Enter your session ID");
       return;
     }
+    if (!/^[A-Z0-9]{5}$/.test(normalizedSessionId)) {
+      setStatus("Session ID must be 5 letters or numbers");
+      return;
+    }
     if (connecting || clientRef.current) return;
 
     setConnecting(true);
@@ -126,6 +131,10 @@ export default function App() {
       setConnecting(false);
       setStatus(hostMode ? "Host connected · start screen sharing" : "Connected");
       setSocket(client);
+      if (!hostMode) {
+        setCodexStatus("Restoring Codex session…");
+        client.emit("codex-start", { sessionId: normalizedSessionId });
+      }
     };
     client.on("session-joined", joined);
     client.on("screen-host-joined", joined);
@@ -198,15 +207,42 @@ export default function App() {
       setCodexThreadId(threadId);
       setCodexStatus(`Connected to Codex · ${cwd || "local workspace"}`);
     });
+    client.on("codex-history", ({ messages, busy }) => {
+      if (!Array.isArray(messages)) return;
+      setCodexMessages(messages.filter((message) =>
+        message && typeof message.id === "string" &&
+        ["user", "assistant", "tool"].includes(message.role) &&
+        typeof message.text === "string"
+      ));
+      setCodexBusy(busy === true);
+      setCodexActivity(busy ? "Codex is continuing the current turn…" : "");
+    });
     client.on("codex-turn-accepted", () => {
       setCodexBusy(true);
       setCodexStatus("Codex is working…");
     });
     client.on("codex-event", (event) => {
       const params = event.params || {};
-      if (event.method === "turn/started") setCodexBusy(true);
+      if (event.method === "turn/started") {
+        setCodexBusy(true);
+        setCodexActivity("Codex is working on your request…");
+      }
+      if (event.method === "item/started") {
+        const item = params.item || {};
+        if (item.type === "commandExecution") setCodexActivity(`Running command: ${item.command || "command"}`);
+        else if (item.type === "fileChange") setCodexActivity("Codex is preparing file changes…");
+        else if (item.type === "mcpToolCall") setCodexActivity(`Using tool: ${item.server || item.tool || item.toolName || "MCP tool"}`);
+        else if (item.type === "webSearch") setCodexActivity("Searching the web…");
+        else if (item.type === "agentMessage") setCodexActivity("Codex is writing a response…");
+      }
+      if (event.method === "item/completed") {
+        const item = params.item || {};
+        if (item.type === "commandExecution") setCodexActivity("Command finished; Codex is continuing…");
+        else if (item.type === "fileChange") setCodexActivity("File changes prepared; Codex is continuing…");
+      }
       if (event.method === "turn/completed") {
         setCodexBusy(false);
+        setCodexActivity("");
         setCodexStatus(params.turn?.status === "failed" ? "Codex turn failed" : "Codex turn complete");
       }
       if (event.method === "item/agentMessage/delta" && typeof params.delta === "string") {
@@ -231,6 +267,7 @@ export default function App() {
     });
     client.on("codex-error", ({ message }) => {
       setCodexBusy(false);
+      setCodexActivity("");
       setCodexStatus(message || "Codex connection error");
     });
     client.on("join-error", (data) => {
@@ -283,7 +320,7 @@ export default function App() {
   function sendCodexMessage(event) {
     event.preventDefault();
     const text = codexDraft.trim();
-    if (!socket?.connected || !codexThreadId || !text || codexBusy) return;
+    if (!socket?.connected || !codexThreadId || !text) return;
     setCodexMessages((previous) => [...previous, { id: `user-${Date.now()}`, role: "user", text }]);
     setCodexDraft("");
     setCodexStatus("Sending to Codex…");
@@ -367,9 +404,10 @@ export default function App() {
         <input
           id="sessionId"
           value={sessionId}
-          onChange={(event) => setSessionId(event.target.value)}
+          onChange={(event) => setSessionId(event.target.value.slice(0, 5))}
           onKeyDown={(event) => event.key === "Enter" && !socket && connectToLaptop()}
-          placeholder="Enter session ID"
+          placeholder="5-character code"
+          maxLength={5}
           autoCapitalize="characters"
           autoComplete="off"
           disabled={!!socket}
@@ -500,6 +538,7 @@ export default function App() {
             {!codexThreadId && <button className="codex-start" onClick={startCodex}>Start Codex</button>}
           </div>
           {codexThreadId && <small className="codex-workspace">Thread {codexThreadId}</small>}
+          {codexActivity && <p className="codex-live-activity" role="status">{codexActivity}</p>}
           {codexApprovals.map((approval) => {
             const params = approval.params || {};
             const detail = params.command || params.reason || Object.keys(params.fileChanges || {}).join(", ") || approval.method;
@@ -522,8 +561,8 @@ export default function App() {
             ))}
           </div>
           <form className="codex-composer" onSubmit={sendCodexMessage}>
-            <textarea value={codexDraft} onChange={(event) => setCodexDraft(event.target.value)} placeholder={codexThreadId ? "Message Codex…" : "Start Codex first"} disabled={!codexThreadId || codexBusy} rows={3} />
-            <button type="submit" disabled={!codexThreadId || codexBusy || !codexDraft.trim()}>{codexBusy ? "Working…" : "Send"}</button>
+            <textarea value={codexDraft} onChange={(event) => setCodexDraft(event.target.value)} placeholder={codexThreadId ? (codexBusy ? "Send Codex an update…" : "Message Codex…") : "Start Codex first"} disabled={!codexThreadId} rows={3} />
+            <button type="submit" disabled={!codexThreadId || !codexDraft.trim()}>{codexBusy ? "Send update" : "Send"}</button>
           </form>
         </section>}
 

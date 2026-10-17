@@ -74,7 +74,7 @@ def phone_connected():
     print("Phone connected!")
     if codex_app:
         if codex_app.thread_id:
-            sio.emit("codex-thread-ready", {"sessionId": session_id, "threadId": codex_app.thread_id, "cwd": str(project_root)})
+            emit_codex_thread(codex_app)
         for approval in codex_app.pending_approvals():
             emit_codex_approval(approval)
 
@@ -192,13 +192,29 @@ def emit_codex_error(message):
         sio.emit("codex-error", {"sessionId": session_id, "message": str(message)[:1000]})
 
 
+def emit_codex_thread(adapter):
+    if not session_id or not adapter.thread_id:
+        return
+    sio.emit("codex-thread-ready", {
+        "sessionId": session_id,
+        "threadId": adapter.thread_id,
+        "cwd": adapter.cwd or str(project_root),
+    })
+    try:
+        messages = adapter.read_history()
+        sio.emit("codex-history", {
+            "sessionId": session_id,
+            "messages": messages,
+            "busy": bool(adapter.active_turn_id),
+        })
+    except Exception as error:
+        emit_codex_error(f"Could not load Codex history: {error}")
+
+
 def start_codex_thread():
     global codex_app, codex_thread_starting
     with codex_lock:
         if codex_thread_starting:
-            return
-        if codex_app and codex_app.thread_id:
-            sio.emit("codex-thread-ready", {"sessionId": session_id, "threadId": codex_app.thread_id, "cwd": str(project_root)})
             return
         codex_thread_starting = True
     try:
@@ -206,11 +222,10 @@ def start_codex_thread():
             if codex_app is None:
                 codex_app = CodexAppServer(emit_codex_event, emit_codex_approval, emit_codex_error)
             adapter = codex_app
-        if adapter.thread_id:
-            sio.emit("codex-thread-ready", {"sessionId": session_id, "threadId": adapter.thread_id, "cwd": str(project_root)})
-            return
         result = adapter.start_thread(project_root)
         sio.emit("codex-thread-ready", {"sessionId": session_id, **result})
+        messages = adapter.read_history()
+        sio.emit("codex-history", {"sessionId": session_id, "messages": messages, "busy": bool(adapter.active_turn_id)})
     except Exception as error:
         emit_codex_error(error)
     finally:

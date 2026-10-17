@@ -241,6 +241,7 @@ footer span { margin: 0 7px; color: #2ca88e; }
 .codex-heading h2 { margin: 0 0 6px; font-size: 15px; }
 .codex-heading p,
 .codex-workspace { margin: 0; color: #91a0b2; font-size: 11px; overflow-wrap: anywhere; }
+.codex-live-activity { margin: 10px 0 0; color: #5ee4c2; font-size: 12px; overflow-wrap: anywhere; }
 .codex-start,
 .codex-composer button,
 .codex-approval button {
@@ -270,6 +271,7 @@ footer span { margin: 0 7px; color: #2ca88e; }
   overflow-wrap: anywhere;
 }
 .codex-message.user { border-color: #246e60; }
+.codex-message.tool { border-color: #344153; background: #111925; }
 .codex-message strong,
 .codex-approval strong { color: #5ee4c2; font-size: 11px; }
 .codex-message pre {

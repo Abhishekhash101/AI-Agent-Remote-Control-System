@@ -173,6 +173,21 @@ io.on('connection', (socket) => {
         });
     });
 
+    socket.on("codex-history", (payload = {}) => {
+        const session = sessions.get(payload.sessionId);
+        if (!session || socket.id !== session.laptop || !session.phone || !Array.isArray(payload.messages)) return;
+        const messages = payload.messages.filter((message) =>
+            message && typeof message.id === "string" &&
+            ["user", "assistant", "tool"].includes(message.role) &&
+            typeof message.text === "string"
+        ).map((message) => ({
+            id: message.id.slice(0, 200),
+            role: message.role,
+            text: message.text,
+        }));
+        io.to(session.phone).emit("codex-history", { messages, busy: payload.busy === true });
+    });
+
     socket.on("codex-turn-accepted", (payload = {}) => {
         const session = sessions.get(payload.sessionId);
         if (session && socket.id === session.laptop && session.phone) {
@@ -276,7 +291,8 @@ io.on('connection', (socket) => {
 function generateSessionId() {
     let sessionId;
     do {
-        sessionId = crypto.randomBytes(6).toString("hex").toUpperCase();
+        const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
+        sessionId = Array.from({ length: 5 }, () => alphabet[crypto.randomInt(alphabet.length)]).join("");
     } while (sessions.has(sessionId));
     return sessionId;
 }
