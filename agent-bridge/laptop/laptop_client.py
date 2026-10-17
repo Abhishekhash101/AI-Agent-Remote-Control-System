@@ -1,5 +1,4 @@
 
-import json
 import threading
 import time
 from pathlib import Path
@@ -9,12 +8,20 @@ import socketio
 from codex_app_server import CodexAppServer
 
 SERVER_URL = "https://agentbridge-server.onrender.com"
-GEMINI_LOG = Path.home() / ".gemini" / "agentbridge-hook.log"
 
-sio = socketio.Client(reconnection=True)
+# Prefer WebSocket transport to avoid Render.com cold-start HTTP polling failures.
+# Reconnection uses exponential back-off (1s → 60s cap).
+sio = socketio.Client(
+    reconnection=True,
+    reconnection_attempts=0,
+    reconnection_delay=1,
+    reconnection_delay_max=60,
+    randomization_factor=0.5,
+    logger=False,
+    engineio_logger=False,
+)
+
 session_id = None
-log_position = 0
-watcher_started = False
 project_root = Path(__file__).resolve().parent.parent
 codex_app = None
 codex_lock = threading.Lock()
@@ -39,36 +46,38 @@ ALLOWED_KEYS = {
 held_modifiers = set()
 held_mouse_buttons = set()
 
+
 @sio.event
 def connect():
     print("Connected to AgentBridge server.")
     sio.emit("create-session", {"sessionId": session_id})
 
+
 @sio.event
 def connect_error(data):
-    print("Connection failed:", data)
+    if isinstance(data, Exception):
+        message = repr(data)
+    elif isinstance(data, dict):
+        message = data.get("message") or str(data)
+    else:
+        message = str(data)
+    print("Connection failed:", message)
+
 
 @sio.event
 def disconnect(reason=None):
     print("Disconnected from server:", reason)
     release_modifiers()
 
+
 @sio.on("session-created")
 def session_created(data):
-    global session_id, log_position, watcher_started
+    global session_id
     session_id = data["sessionId"]
-    try:
-        log_position = GEMINI_LOG.stat().st_size
-    except FileNotFoundError:
-        log_position = 0
-
     print("\nSession created!")
     print("Session ID:", session_id)
     print("Waiting for phone commands...")
 
-    if not watcher_started:
-        watcher_started = True
-        threading.Thread(target=watch_gemini_log, daemon=True).start()
 
 @sio.on("phone-connected")
 def phone_connected():
@@ -78,20 +87,20 @@ def phone_connected():
         for approval in codex_app.pending_approvals():
             emit_codex_approval(approval)
 
+
 @sio.on("execute-command")
 def execute_command(data):
     command = data.get("command", "").upper()
-
     if command not in ALLOWED_COMMANDS:
         print("Blocked unknown command:", command)
         return
-
     try:
         with pyautogui_lock:
             pyautogui.press(ALLOWED_COMMANDS[command])
         print("Executed command:", command)
     except Exception as error:
         print("Could not execute command:", repr(error))
+
 
 @sio.on("execute-pointer")
 def execute_pointer(data):
@@ -106,12 +115,16 @@ def execute_pointer(data):
                 print("Could not execute scroll:", repr(error))
         return
     x, y = data.get("x"), data.get("y")
-    if action not in {"move", "down", "up", "click", "right-click", "double-click"} or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+    if action not in {"move", "down", "up", "click", "right-click", "double-click"} \
+            or not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
         return
     try:
         with pyautogui_lock:
             width, height = pyautogui.size()
-            point = (round(max(0, min(1, x)) * (width - 1)), round(max(0, min(1, y)) * (height - 1)))
+            point = (
+                round(max(0, min(1, x)) * (width - 1)),
+                round(max(0, min(1, y)) * (height - 1)),
+            )
             if action == "click":
                 pyautogui.click(*point)
             elif action == "down":
@@ -130,6 +143,7 @@ def execute_pointer(data):
                 pyautogui.moveTo(*point, _pause=False)
     except Exception as error:
         print("Could not execute pointer input:", repr(error))
+
 
 @sio.on("execute-key")
 def execute_key(data):
@@ -152,6 +166,7 @@ def execute_key(data):
     except Exception as error:
         print("Could not execute key:", repr(error))
 
+
 @sio.on("execute-text")
 def execute_text(data):
     text = data.get("text", "")
@@ -163,9 +178,11 @@ def execute_text(data):
     except Exception as error:
         print("Could not type text (only keyboard-supported characters may work):", repr(error))
 
+
 @sio.on("phone-disconnected")
 def phone_disconnected():
     release_modifiers()
+
 
 def release_modifiers():
     with pyautogui_lock:
@@ -183,6 +200,8 @@ def release_modifiers():
             held_mouse_buttons.discard(button)
 
 
+# ── Codex helpers ────────────────────────────────────────────────────────────
+
 def emit_codex_event(payload):
     if session_id:
         sio.emit("codex-event", {"sessionId": session_id, "event": payload})
@@ -196,25 +215,6 @@ def emit_codex_approval(payload):
 def emit_codex_error(message):
     if session_id:
         sio.emit("codex-error", {"sessionId": session_id, "message": str(message)[:1000]})
-
-
-def emit_codex_thread(adapter):
-    if not session_id or not adapter.thread_id:
-        return
-    sio.emit("codex-thread-ready", {
-        "sessionId": session_id,
-        "threadId": adapter.thread_id,
-        "cwd": adapter.cwd or str(project_root),
-    })
-    try:
-        messages = adapter.read_history()
-        sio.emit("codex-history", {
-            "sessionId": session_id,
-            "messages": messages,
-            "busy": bool(adapter.active_turn_id),
-        })
-    except Exception as error:
-        emit_codex_error(f"Could not load Codex history: {error}")
 
 
 def start_codex_thread():
@@ -231,7 +231,11 @@ def start_codex_thread():
         result = adapter.start_thread(project_root)
         sio.emit("codex-thread-ready", {"sessionId": session_id, **result})
         messages = adapter.read_history()
-        sio.emit("codex-history", {"sessionId": session_id, "messages": messages, "busy": bool(adapter.active_turn_id)})
+        sio.emit("codex-history", {
+            "sessionId": session_id,
+            "messages": messages,
+            "busy": bool(adapter.active_turn_id),
+        })
     except Exception as error:
         emit_codex_error(error)
     finally:
@@ -249,7 +253,8 @@ def codex_start(data):
 @sio.on("codex-send")
 def codex_send(data):
     text = data.get("text")
-    if not session_id or data.get("sessionId") != session_id or not isinstance(text, str) or not text.strip() or len(text) > 12000:
+    if (not session_id or data.get("sessionId") != session_id
+            or not isinstance(text, str) or not text.strip() or len(text) > 12000):
         return
     adapter = codex_app
     if not adapter or not adapter.thread_id:
@@ -274,47 +279,49 @@ def codex_approval_decision(data):
     if not adapter:
         return
     try:
-        adapter.respond_to_approval(data.get("requestId"), data.get("method"), data.get("decision"))
+        adapter.respond_to_approval(
+            data.get("requestId"), data.get("method"), data.get("decision")
+        )
     except Exception as error:
         emit_codex_error(error)
 
 
-def watch_gemini_log():
-    global log_position
+# ── Connection ───────────────────────────────────────────────────────────────
+
+def _connect_with_retry():
+    """Connect with exponential back-off to handle Render.com cold-start drops."""
+    INITIAL_WAIT = 5
+    MAX_WAIT     = 60
+    MAX_ATTEMPTS = 10
+
+    wait    = INITIAL_WAIT
+    attempt = 0
 
     while True:
         try:
-            if GEMINI_LOG.exists():
-                size = GEMINI_LOG.stat().st_size
-                if size < log_position:
-                    log_position = 0
-
-                with GEMINI_LOG.open("r", encoding="utf-8") as log:
-                    log.seek(log_position)
-                    for line in log:
-                        try:
-                            entry = json.loads(line)
-                        except json.JSONDecodeError:
-                            continue
-
-                        tool = entry.get("tool") or entry.get("tool_name")
-                        if session_id and isinstance(tool, str):
-                            sio.emit("agent-activity", {
-                                "sessionId": session_id,
-                                "event": {
-                                    "event": entry.get("event") or entry.get("hook_event_name"),
-                                    "tool": tool,
-                                },
-                            })
-                    log_position = log.tell()
+            sio.connect(SERVER_URL, transports=["websocket"], wait_timeout=30)
+            return
         except Exception as error:
-            print("Gemini log reader error:", repr(error))
+            attempt += 1
+            error_text = repr(error)
+            if "RemoteDisconnected" in error_text or "transport error" in error_text:
+                print(f"Server waking up (attempt {attempt}/{MAX_ATTEMPTS}). Retrying in {wait}s...")
+            else:
+                print(f"Connection attempt {attempt}/{MAX_ATTEMPTS} failed: {error_text}")
 
-        time.sleep(0.5)
+            if attempt >= MAX_ATTEMPTS:
+                raise RuntimeError(
+                    f"Could not connect after {MAX_ATTEMPTS} attempts. "
+                    "Check your internet connection."
+                ) from error
+
+            time.sleep(wait)
+            wait = min(wait * 2, MAX_WAIT)
+
 
 if __name__ == "__main__":
     try:
-        sio.connect(SERVER_URL)
+        _connect_with_retry()
         sio.wait()
     except KeyboardInterrupt:
         print("\nStopping client...")
@@ -324,4 +331,3 @@ if __name__ == "__main__":
     finally:
         if codex_app:
             codex_app.stop()
-
