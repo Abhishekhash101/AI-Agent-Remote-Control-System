@@ -142,6 +142,67 @@ io.on('connection', (socket) => {
         io.to(session.laptop).emit("execute-text", { text });
     });
 
+    socket.on("codex-start", ({ sessionId } = {}) => {
+        const session = sessions.get(sessionId);
+        if (session && socket.id === session.phone) {
+            io.to(session.laptop).emit("codex-start", { sessionId });
+        }
+    });
+
+    socket.on("codex-send", ({ sessionId, text } = {}) => {
+        const session = sessions.get(sessionId);
+        if (!session || socket.id !== session.phone || typeof text !== "string" || !text.trim() || text.length > 12000) return;
+        io.to(session.laptop).emit("codex-send", { sessionId, text });
+    });
+
+    socket.on("codex-approval-decision", ({ sessionId, requestId, method, decision } = {}) => {
+        const session = sessions.get(sessionId);
+        const methods = ["item/commandExecution/requestApproval", "item/fileChange/requestApproval"];
+        const decisions = ["accept", "acceptForSession", "decline", "cancel"];
+        if (!session || socket.id !== session.phone || !["string", "number"].includes(typeof requestId)) return;
+        if (!methods.includes(method) || !decisions.includes(decision)) return;
+        io.to(session.laptop).emit("codex-approval-decision", { sessionId, requestId, method, decision });
+    });
+
+    socket.on("codex-thread-ready", (payload = {}) => {
+        const session = sessions.get(payload.sessionId);
+        if (!session || socket.id !== session.laptop || !session.phone || typeof payload.threadId !== "string") return;
+        io.to(session.phone).emit("codex-thread-ready", {
+            threadId: payload.threadId,
+            cwd: typeof payload.cwd === "string" ? payload.cwd : "",
+        });
+    });
+
+    socket.on("codex-turn-accepted", (payload = {}) => {
+        const session = sessions.get(payload.sessionId);
+        if (session && socket.id === session.laptop && session.phone) {
+            io.to(session.phone).emit("codex-turn-accepted");
+        }
+    });
+
+    socket.on("codex-event", (payload = {}) => {
+        const session = sessions.get(payload.sessionId);
+        if (!session || socket.id !== session.laptop || !session.phone || !payload.event || typeof payload.event.method !== "string") return;
+        io.to(session.phone).emit("codex-event", payload.event);
+    });
+
+    socket.on("codex-approval", (payload = {}) => {
+        const session = sessions.get(payload.sessionId);
+        if (!session || socket.id !== session.laptop || !session.phone || !["string", "number"].includes(typeof payload.requestId)) return;
+        if (!["item/commandExecution/requestApproval", "item/fileChange/requestApproval"].includes(payload.method)) return;
+        io.to(session.phone).emit("codex-approval", {
+            requestId: payload.requestId,
+            method: payload.method,
+            params: payload.params || {},
+        });
+    });
+
+    socket.on("codex-error", (payload = {}) => {
+        const session = sessions.get(payload.sessionId);
+        if (!session || socket.id !== session.laptop || !session.phone || typeof payload.message !== "string") return;
+        io.to(session.phone).emit("codex-error", { message: payload.message.slice(0, 1000) });
+    });
+
     //phone send commands 
     socket.on("remote-command", ({ sessionId, command } = {}) => {
         const session = sessions.get(sessionId);

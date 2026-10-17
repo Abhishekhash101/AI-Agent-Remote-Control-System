@@ -17,6 +17,12 @@ export default function App() {
   const [isSharing, setIsSharing] = useState(false);
   const [keyboardDraft, setKeyboardDraft] = useState("");
   const [heldModifiers, setHeldModifiers] = useState([]);
+  const [codexThreadId, setCodexThreadId] = useState("");
+  const [codexMessages, setCodexMessages] = useState([]);
+  const [codexDraft, setCodexDraft] = useState("");
+  const [codexApprovals, setCodexApprovals] = useState([]);
+  const [codexBusy, setCodexBusy] = useState(false);
+  const [codexStatus, setCodexStatus] = useState("Codex is not connected");
   const clientRef = useRef(null);
   const peerRef = useRef(null);
   const streamRef = useRef(null);
@@ -188,6 +194,45 @@ export default function App() {
         ...previous,
       ].slice(0, 30));
     });
+    client.on("codex-thread-ready", ({ threadId, cwd }) => {
+      setCodexThreadId(threadId);
+      setCodexStatus(`Connected to Codex · ${cwd || "local workspace"}`);
+    });
+    client.on("codex-turn-accepted", () => {
+      setCodexBusy(true);
+      setCodexStatus("Codex is working…");
+    });
+    client.on("codex-event", (event) => {
+      const params = event.params || {};
+      if (event.method === "turn/started") setCodexBusy(true);
+      if (event.method === "turn/completed") {
+        setCodexBusy(false);
+        setCodexStatus(params.turn?.status === "failed" ? "Codex turn failed" : "Codex turn complete");
+      }
+      if (event.method === "item/agentMessage/delta" && typeof params.delta === "string") {
+        const id = `assistant-${params.itemId || "current"}`;
+        setCodexMessages((previous) => {
+          const existing = previous.findIndex((message) => message.id === id);
+          if (existing < 0) return [...previous, { id, role: "assistant", text: params.delta }];
+          return previous.map((message, index) => index === existing ? { ...message, text: message.text + params.delta } : message);
+        });
+      } else if (event.method === "item/commandExecution/outputDelta" && typeof params.delta === "string") {
+        const id = `tool-${params.itemId || "current"}`;
+        setCodexMessages((previous) => {
+          const existing = previous.findIndex((message) => message.id === id);
+          if (existing < 0) return [...previous, { id, role: "tool", text: params.delta }];
+          return previous.map((message, index) => index === existing ? { ...message, text: message.text + params.delta } : message);
+        });
+      }
+    });
+    client.on("codex-approval", (approval) => {
+      setCodexApprovals((previous) => previous.some((item) => String(item.requestId) === String(approval.requestId)) ? previous : [...previous, approval]);
+      setCodexStatus("Codex needs your approval");
+    });
+    client.on("codex-error", ({ message }) => {
+      setCodexBusy(false);
+      setCodexStatus(message || "Codex connection error");
+    });
     client.on("join-error", (data) => {
       rejectJoin(data?.message || "Connection failed");
     });
@@ -227,6 +272,34 @@ export default function App() {
   function sendKey(key, action = "press") {
     if (!socket?.connected) return;
     socket.emit("remote-key", { sessionId: sessionRef.current, key, action });
+  }
+
+  function startCodex() {
+    if (!socket?.connected) return;
+    setCodexStatus("Starting local Codex App Server…");
+    socket.emit("codex-start", { sessionId: sessionRef.current });
+  }
+
+  function sendCodexMessage(event) {
+    event.preventDefault();
+    const text = codexDraft.trim();
+    if (!socket?.connected || !codexThreadId || !text || codexBusy) return;
+    setCodexMessages((previous) => [...previous, { id: `user-${Date.now()}`, role: "user", text }]);
+    setCodexDraft("");
+    setCodexStatus("Sending to Codex…");
+    socket.emit("codex-send", { sessionId: sessionRef.current, text });
+  }
+
+  function respondToCodexApproval(approval, decision) {
+    if (!socket?.connected) return;
+    socket.emit("codex-approval-decision", {
+      sessionId: sessionRef.current,
+      requestId: approval.requestId,
+      method: approval.method,
+      decision,
+    });
+    setCodexApprovals((previous) => previous.filter((item) => String(item.requestId) !== String(approval.requestId)));
+    setCodexStatus(decision.startsWith("accept") ? "Approval sent" : "Request declined");
   }
 
   function toggleModifier(key) {
@@ -417,6 +490,42 @@ export default function App() {
             </ul>
           )}
         </div>}
+
+        {!hostMode && socket && <section className="codex-panel" aria-label="Codex remote session">
+          <div className="codex-heading">
+            <div>
+              <h2>Codex on this laptop</h2>
+              <p>{codexStatus}</p>
+            </div>
+            {!codexThreadId && <button className="codex-start" onClick={startCodex}>Start Codex</button>}
+          </div>
+          {codexThreadId && <small className="codex-workspace">Thread {codexThreadId}</small>}
+          {codexApprovals.map((approval) => {
+            const params = approval.params || {};
+            const detail = params.command || params.reason || Object.keys(params.fileChanges || {}).join(", ") || approval.method;
+            return <article className="codex-approval" key={String(approval.requestId)}>
+              <strong>{approval.method.includes("fileChange") ? "File change approval" : "Command approval"}</strong>
+              <code>{String(detail).slice(0, 700)}</code>
+              {params.cwd && <small>Directory: {params.cwd}</small>}
+              <div>
+                <button onClick={() => respondToCodexApproval(approval, "accept")}>Approve once</button>
+                <button onClick={() => respondToCodexApproval(approval, "decline")}>Decline</button>
+              </div>
+            </article>;
+          })}
+          <div className="codex-transcript" aria-live="polite">
+            {codexMessages.length === 0 ? <p className="activity-empty">Start a Codex thread to chat with the agent running on this laptop.</p> : codexMessages.map((message) => (
+              <article className={`codex-message ${message.role}`} key={message.id}>
+                <strong>{message.role === "user" ? "You" : message.role === "tool" ? "Tool output" : "Codex"}</strong>
+                <pre>{message.text}</pre>
+              </article>
+            ))}
+          </div>
+          <form className="codex-composer" onSubmit={sendCodexMessage}>
+            <textarea value={codexDraft} onChange={(event) => setCodexDraft(event.target.value)} placeholder={codexThreadId ? "Message Codex…" : "Start Codex first"} disabled={!codexThreadId || codexBusy} rows={3} />
+            <button type="submit" disabled={!codexThreadId || codexBusy || !codexDraft.trim()}>{codexBusy ? "Working…" : "Send"}</button>
+          </form>
+        </section>}
 
         <p className="hint">
           {hostMode ? "Keep this browser tab open while sharing. Stop sharing from the browser to end capture." : "Keep the laptop client and screen host browser open while connected."}

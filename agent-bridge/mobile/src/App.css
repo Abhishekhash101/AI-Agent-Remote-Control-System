@@ -13,7 +13,7 @@ body {
     #080d14;
 }
 
-button, input { font: inherit; }
+button, input, textarea { font: inherit; }
 
 .app {
   min-height: 100vh;
@@ -227,3 +227,80 @@ footer span { margin: 0 7px; color: #2ca88e; }
   color: #d9fff4;
   background: #164c43;
 }
+.codex-panel {
+  margin-top: 22px;
+  padding-top: 18px;
+  border-top: 1px solid #25313f;
+}
+.codex-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+.codex-heading h2 { margin: 0 0 6px; font-size: 15px; }
+.codex-heading p,
+.codex-workspace { margin: 0; color: #91a0b2; font-size: 11px; overflow-wrap: anywhere; }
+.codex-start,
+.codex-composer button,
+.codex-approval button {
+  width: auto;
+  min-height: 38px;
+  padding: 0 12px;
+  color: #d9fff4;
+  background: #164c43;
+  border-color: #246e60;
+  font-size: 12px;
+}
+.codex-transcript {
+  display: grid;
+  gap: 9px;
+  max-height: 360px;
+  overflow-y: auto;
+  margin-top: 13px;
+}
+.codex-message,
+.codex-approval {
+  display: grid;
+  gap: 6px;
+  padding: 10px;
+  border: 1px solid #344153;
+  border-radius: 9px;
+  background: #0b121b;
+  overflow-wrap: anywhere;
+}
+.codex-message.user { border-color: #246e60; }
+.codex-message strong,
+.codex-approval strong { color: #5ee4c2; font-size: 11px; }
+.codex-message pre {
+  margin: 0;
+  color: #dce5ee;
+  font: 12px/1.5 'DM Mono', monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.codex-approval { margin-top: 12px; border-color: #8e7440; }
+.codex-approval code {
+  color: #f3dfb0;
+  font: 11px/1.5 'DM Mono', monospace;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+.codex-approval small { color: #91a0b2; font-size: 10px; overflow-wrap: anywhere; }
+.codex-approval > div { display: flex; gap: 8px; margin-top: 4px; }
+.codex-approval > div button:last-child { color: #ffb8bd; background: #351c24; border-color: #65343d; }
+.codex-composer { display: grid; grid-template-columns: 1fr auto; align-items: stretch; gap: 8px; margin-top: 12px; }
+.codex-composer textarea {
+  width: 100%;
+  min-width: 0;
+  resize: vertical;
+  padding: 10px 12px;
+  border: 1px solid #344356;
+  border-radius: 10px;
+  outline: none;
+  color: #edf3f8;
+  background: #0b121b;
+  font-size: 13px;
+}
+.codex-composer textarea:focus { border-color: #2ebc9d; box-shadow: 0 0 0 3px rgba(46, 188, 157, .12); }
+.codex-composer button:disabled { opacity: .45; cursor: not-allowed; }

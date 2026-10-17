@@ -34,3 +34,18 @@ sharing or disconnecting either client ends the screen stream.
 Set `VITE_SERVER_URL` in `.env.local` to the Socket.IO server URL before
 building/developing. WebRTC uses a public STUN server; networks that block direct
 peer connectivity may require configuring a TURN service.
+
+## Codex from the phone
+
+Install and sign in to Codex CLI on the laptop, then start the existing bridge:
+
+```bash
+python3 laptop/laptop_client.py
+```
+
+Join the session from the phone and use **Codex on this laptop → Start Codex**.
+The laptop client launches `codex app-server --stdio` locally and uses the
+project root as the thread working directory. Send prompts in the Codex panel;
+command and file-change approvals appear there with approve-once and decline
+actions. The App Server is not exposed on Render: Render relays messages only
+between the paired phone and the laptop client.
