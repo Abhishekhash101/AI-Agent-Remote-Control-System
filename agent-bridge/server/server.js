@@ -8,7 +8,6 @@ const app = express();
 const server = http.createServer(app)
 
 app.use(cors());
-
 const io = new Server(server, {
     cors: {
         origin: "*",

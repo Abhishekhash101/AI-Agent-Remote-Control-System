@@ -15,6 +15,7 @@ export default function App() {
   const [activities, setActivities] = useState([]);
   const [hasVideo, setHasVideo] = useState(false);
   const [isSharing, setIsSharing] = useState(false);
+  const [isViewerFullscreen, setIsViewerFullscreen] = useState(false);
   const [keyboardDraft, setKeyboardDraft] = useState("");
   const [heldModifiers, setHeldModifiers] = useState([]);
   const [codexThreadId, setCodexThreadId] = useState("");
@@ -29,6 +30,7 @@ export default function App() {
   const peerRef = useRef(null);
   const streamRef = useRef(null);
   const videoRef = useRef(null);
+  const viewerRef = useRef(null);
   const sessionRef = useRef("");
   const pendingCandidates = useRef([]);
   const phoneReadyRef = useRef(false);
@@ -81,6 +83,36 @@ export default function App() {
     streamRef.current?.getTracks().forEach((track) => track.stop());
     clientRef.current?.disconnect();
   }, []);
+
+  useEffect(() => {
+    const updateFullscreen = () => setIsViewerFullscreen(
+      document.fullscreenElement === viewerRef.current || document.webkitFullscreenElement === viewerRef.current || videoRef.current?.webkitDisplayingFullscreen === true
+    );
+    const video = videoRef.current;
+    document.addEventListener("fullscreenchange", updateFullscreen);
+    document.addEventListener("webkitfullscreenchange", updateFullscreen);
+    video?.addEventListener("webkitbeginfullscreen", updateFullscreen);
+    video?.addEventListener("webkitendfullscreen", updateFullscreen);
+    return () => {
+      document.removeEventListener("fullscreenchange", updateFullscreen);
+      document.removeEventListener("webkitfullscreenchange", updateFullscreen);
+      video?.removeEventListener("webkitbeginfullscreen", updateFullscreen);
+      video?.removeEventListener("webkitendfullscreen", updateFullscreen);
+    };
+  }, [socket]);
+
+  function stopScreenShare() {
+    const stream = streamRef.current;
+    streamRef.current = null;
+    stream?.getTracks().forEach((track) => {
+      track.onended = null;
+      track.stop();
+    });
+    clientRef.current?.emit("screen-ended", { sessionId: sessionRef.current });
+    setIsSharing(false);
+    closePeer();
+    setStatus("Screen sharing stopped");
+  }
 
   async function startScreenShare() {
     try {
@@ -475,6 +507,27 @@ export default function App() {
     };
   }
 
+  async function toggleViewerFullscreen() {
+    const viewer = viewerRef.current;
+    if (!viewer) return;
+    try {
+      if (document.fullscreenElement || document.webkitFullscreenElement) {
+        if (document.exitFullscreen) await document.exitFullscreen();
+        else document.webkitExitFullscreen?.();
+        return;
+      }
+      if (videoRef.current?.webkitDisplayingFullscreen) {
+        videoRef.current.webkitExitFullscreen?.();
+        return;
+      }
+      if (viewer.requestFullscreen) await viewer.requestFullscreen();
+      else if (viewer.webkitRequestFullscreen) viewer.webkitRequestFullscreen();
+      else if (videoRef.current?.webkitEnterFullscreen) videoRef.current.webkitEnterFullscreen();
+    } catch (error) {
+      setStatus(`Could not open full screen: ${error.message}`);
+    }
+  }
+
   return (
     <main className="app">
       <section className="panel" aria-labelledby="app-title">
@@ -511,33 +564,44 @@ export default function App() {
           Status: <strong>{status}</strong>
         </p>
 
-        {hostMode && socket && <button className="connect share-screen" onClick={startScreenShare} disabled={isSharing}>Share this screen</button>}
+        {hostMode && socket && <button className={`connect share-screen ${isSharing ? "sharing" : ""}`} onClick={isSharing ? stopScreenShare : startScreenShare}>
+          {isSharing ? "Stop sharing screen" : "Share this screen"}
+        </button>}
 
-        {!hostMode && socket && <div className="screen-viewer">
+        {!hostMode && socket && <div className={`screen-viewer ${hasVideo ? "has-video" : ""}`} ref={viewerRef}>
+          <div className="screen-viewer-toolbar">
+            <span>{hasVideo ? "LIVE · laptop screen" : "Screen preview"}</span>
+            <button type="button" onClick={toggleViewerFullscreen} disabled={!hasVideo} aria-label={isViewerFullscreen ? "Exit full screen" : "View full screen"}>
+              {isViewerFullscreen ? "Exit full screen" : "Full screen"}
+            </button>
+          </div>
           <video
             ref={videoRef}
             autoPlay
             playsInline
             muted
             onPointerDown={(event) => {
+              if (!hasVideo) return;
               event.currentTarget.setPointerCapture?.(event.pointerId);
               if (event.button === 0) sendPointer(event, "down");
             }}
-            onPointerMove={(event) => sendPointer(event, "move")}
+            onPointerMove={(event) => { if (hasVideo) sendPointer(event, "move"); }}
             onPointerUp={(event) => {
+              if (!hasVideo) return;
               if (event.button === 0) sendPointer(event, "up");
             }}
-            onPointerCancel={(event) => sendPointer(event, "up")}
-            onContextMenu={(event) => { event.preventDefault(); sendPointer(event, "right-click"); }}
+            onPointerCancel={(event) => { if (hasVideo) sendPointer(event, "up"); }}
+            onContextMenu={(event) => { event.preventDefault(); if (hasVideo) sendPointer(event, "right-click"); }}
             onWheel={(event) => {
               event.preventDefault();
+              if (!hasVideo) return;
               socket.emit("remote-pointer", { sessionId: sessionRef.current, action: "scroll", y: -Math.sign(event.deltaY) * Math.max(1, Math.min(10, Math.round(Math.abs(event.deltaY) / 80))) });
             }}
           />
-          {!hasVideo && <span>Waiting for the laptop screen…</span>}
+          {!hasVideo && <span className="screen-waiting">Waiting for the laptop screen…</span>}
         </div>}
 
-        {!hostMode && socket && <div className="pointer-controls" aria-label="Mouse controls">
+        {!hostMode && socket && hasVideo && <div className="pointer-controls" aria-label="Mouse controls">
           <button onClick={() => sendPointer(lastPointerRef.current, "click")}>Left click</button>
           <button onClick={() => sendPointer(lastPointerRef.current, "double-click")}>Double click</button>
           <button onClick={() => sendPointer(lastPointerRef.current, "right-click")}>Right click</button>
