@@ -1,0 +1,2 @@
+PyAutoGUI
+python-socketio[client]

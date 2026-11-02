@@ -35,6 +35,7 @@ export default function App() {
   const pendingCandidates = useRef([]);
   const phoneReadyRef = useRef(false);
   const keyboardDraftRef = useRef("");
+  const viewerModifiersRef = useRef(new Set());
   const lastPointerRef = useRef({ x: 0.5, y: 0.5 });
   const codexAutoStarted = useRef(false);
   const transcriptEndRef = useRef(null);
@@ -423,6 +424,58 @@ export default function App() {
     socket.emit("remote-key", { sessionId: sessionRef.current, key, action });
   }
 
+  function handleViewerKeyDown(event) {
+    if (hostMode || !hasVideo || event.target !== videoRef.current) return;
+    const modifierNames = { Control: "ctrl", Alt: "alt", Shift: "shift", Meta: "win" };
+    const modifier = modifierNames[event.key];
+    if (modifier) {
+      event.preventDefault();
+      if (!viewerModifiersRef.current.has(modifier)) {
+        viewerModifiersRef.current.add(modifier);
+        sendKey(modifier, "down");
+      }
+      return;
+    }
+
+    const keyNames = {
+      Enter: "enter", Tab: "tab", Escape: "esc", Backspace: "backspace",
+      Delete: "delete", Insert: "insert", ArrowUp: "up", ArrowDown: "down",
+      ArrowLeft: "left", ArrowRight: "right", Home: "home", End: "end",
+      PageUp: "pageup", PageDown: "pagedown", " ": "space",
+      ...Object.fromEntries(Array.from({ length: 12 }, (_, index) => [`F${index + 1}`, `f${index + 1}`])),
+    };
+    const mapped = keyNames[event.key];
+    if (mapped) {
+      event.preventDefault();
+      sendKey(mapped);
+      return;
+    }
+
+    if (event.key.length === 1) {
+      event.preventDefault();
+      if (["ctrl", "alt", "win"].some((name) => viewerModifiersRef.current.has(name))) {
+        const shortcutKey = event.key.toLowerCase();
+        if (/^[a-z0-9]$/.test(shortcutKey)) sendKey(shortcutKey);
+      } else {
+        socket?.emit("remote-text", { sessionId: sessionRef.current, text: event.key });
+      }
+    }
+  }
+
+  function handleViewerKeyUp(event) {
+    const modifierNames = { Control: "ctrl", Alt: "alt", Shift: "shift", Meta: "win" };
+    const modifier = modifierNames[event.key];
+    if (modifier && viewerModifiersRef.current.delete(modifier)) {
+      event.preventDefault();
+      sendKey(modifier, "up");
+    }
+  }
+
+  function releaseViewerModifiers() {
+    for (const modifier of viewerModifiersRef.current) sendKey(modifier, "up");
+    viewerModifiersRef.current.clear();
+  }
+
   function startCodex() {
     if (!socket?.connected) return;
     setCodexStatus("Starting Codex on laptop…");
@@ -474,6 +527,7 @@ export default function App() {
   }
 
   function disconnect() {
+    releaseViewerModifiers();
     closePeer();
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
@@ -580,8 +634,14 @@ export default function App() {
             autoPlay
             playsInline
             muted
+            tabIndex={hasVideo ? 0 : -1}
+            aria-label="Shared laptop screen. Click here, then use your keyboard to control it."
+            onKeyDown={handleViewerKeyDown}
+            onKeyUp={handleViewerKeyUp}
+            onBlur={releaseViewerModifiers}
             onPointerDown={(event) => {
               if (!hasVideo) return;
+              event.currentTarget.focus();
               event.currentTarget.setPointerCapture?.(event.pointerId);
               if (event.button === 0) sendPointer(event, "down");
             }}

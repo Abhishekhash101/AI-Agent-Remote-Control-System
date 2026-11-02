@@ -146,7 +146,7 @@ io.on('connection', (socket) => {
             "shift", "ctrl", "alt", "win", "capslock", "numlock", "pause", "printscreen",
             ...Array.from({ length: 12 }, (_, i) => `f${i + 1}`),
         ]);
-        if (!session || socket.id !== session.phone || typeof key !== "string" || !keys.has(key)) return;
+        if (!session || socket.id !== session.phone || typeof key !== "string" || !(keys.has(key) || /^[a-z0-9]$/.test(key))) return;
         if (!["press", "down", "up"].includes(action)) return;
         if (action !== "press" && !["shift", "ctrl", "alt", "win"].includes(key)) return;
         io.to(session.laptop).emit("execute-key", { key, action });

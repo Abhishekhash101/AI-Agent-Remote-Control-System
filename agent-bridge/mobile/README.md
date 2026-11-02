@@ -16,14 +16,17 @@ The React Compiler is not enabled on this template because of its impact on dev 
 If you are developing a production application, we recommend using TypeScript with type-aware lint rules enabled. Check out the [TS template](https://github.com/vitejs/vite/tree/main/packages/create-vite/template-react-ts) for information on how to integrate TypeScript and Oxlint's TypeScript related rules in your project.
 # AgentBridge web app
 
-The phone joins the session ID printed by `laptop/laptop_client.py`. For desktop
-screen sharing, open the web app on the laptop with `?mode=host`, enter that
-same ID, connect, then choose **Share this screen** and select the display or
-window. On the phone, open the regular app and join the same ID. Touch the
-preview to click, hold and drag to drag, or use the mouse controls to left-click,
-right-click, double-click, and scroll. The keyboard field opens the phone
-keyboard and sends typed text to the laptop; the extra keys and Shift/Ctrl/Alt
-buttons cover navigation and shortcuts. Keep the laptop client running.
+The laptop client prints a session ID when you run `laptop/laptop_client.py`.
+For screen sharing, open the web app on the laptop with `?mode=host`, enter that
+ID, connect, then choose **Share this screen** and select the display or window.
+
+Join that same ID from the regular web app on a phone or another laptop. Both
+can act as the controller; the server supports one controller connection at a
+time. Use the mouse or touch on the live preview to click and drag, or use the
+buttons for right-click, double-click, and scrolling. On a laptop, click the
+preview and type or use supported keys and shortcuts with its keyboard. On a
+phone, use the keyboard field and extra key buttons. Keep the Python client and
+screen-host browser open during the session.
 
 Screen capture requires browser permission and a secure context (HTTPS, or
 `localhost`). When testing on the LAN, run the host page on the laptop at

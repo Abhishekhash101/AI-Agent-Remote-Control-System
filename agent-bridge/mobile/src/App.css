@@ -227,6 +227,7 @@ footer span { margin: 0 7px; color: #2ca88e; }
   touch-action: none;
   user-select: none;
 }
+.screen-viewer video:focus-visible { outline: 2px solid #5ee4c2; outline-offset: -3px; }
 .screen-viewer .screen-waiting { position: absolute; pointer-events: none; }
 .screen-viewer:fullscreen,
 .screen-viewer:-webkit-full-screen {
@@ -248,6 +249,11 @@ footer span { margin: 0 7px; color: #2ca88e; }
 @media (max-width: 600px) {
   .screen-viewer { min-height: 44vw; }
   .screen-viewer video { max-height: 52vh; }
+}
+
+@media (min-width: 800px) {
+  .panel:has(.screen-viewer) { width: min(100%, 1000px); }
+  .screen-viewer video { max-height: 70vh; cursor: crosshair; }
 }
 
 .pointer-controls,
