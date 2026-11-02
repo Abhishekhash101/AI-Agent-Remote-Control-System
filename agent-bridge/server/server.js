@@ -158,6 +158,15 @@ io.on('connection', (socket) => {
         io.to(session.laptop).emit("execute-text", { text });
     });
 
+    socket.on("control-status", ({ sessionId, available, message } = {}) => {
+        const session = sessions.get(sessionId);
+        if (!session || socket.id !== session.laptop || !session.phone) return;
+        io.to(session.phone).emit("control-status", {
+            available: available === true,
+            message: typeof message === "string" ? message.slice(0, 500) : "",
+        });
+    });
+
     socket.on("codex-start", ({ sessionId } = {}) => {
         const session = sessions.get(sessionId);
         if (session && socket.id === session.phone) {

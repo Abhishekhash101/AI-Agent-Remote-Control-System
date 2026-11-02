@@ -57,6 +57,30 @@ def get_pyautogui():
         return pyautogui
     if pyautogui_error is not None:
         return None
+
+
+def check_desktop_input():
+    """Confirm PyAutoGUI can see and address the logged-in desktop."""
+    global pyautogui, pyautogui_error
+    gui = get_pyautogui()
+    if not gui:
+        return False, str(pyautogui_error or "PyAutoGUI is unavailable")
+    try:
+        gui.size()
+        return True, "Laptop keyboard and mouse control is ready."
+    except Exception as error:
+        pyautogui = None
+        pyautogui_error = error
+        return False, f"Cannot access the laptop display: {error}"
+
+
+def report_control_status(available, message):
+    if session_id:
+        safe_emit("control-status", {
+            "sessionId": session_id,
+            "available": available is True,
+            "message": str(message)[:500],
+        })
     try:
         import pyautogui as pyautogui_module
         pyautogui = pyautogui_module
@@ -125,6 +149,10 @@ def session_created(data):
 @sio.on("phone-connected")
 def phone_connected():
     print("\n📱 Phone connected! Bi-way synchronization is active.\n")
+    available, message = check_desktop_input()
+    report_control_status(available, message)
+    if not available:
+        print("[Remote control unavailable]", message)
     if codex_app and codex_app.thread_id:
         safe_emit("codex-thread-ready", {"sessionId": session_id, "threadId": codex_app.thread_id, "cwd": codex_app.cwd})
         messages = codex_app.read_history()
@@ -156,21 +184,21 @@ def execute_pointer(data):
     gui = get_pyautogui()
     if not gui:
         return
-    screen_width, screen_height = gui.size()
-    if action == "scroll":
-        amount = data.get("amount", 0)
-        if isinstance(amount, (int, float)):
-            with pyautogui_lock:
-                gui.scroll(-int(amount) * 60)
-        return
-
-    x = data.get("x")
-    y = data.get("y")
-    if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
-        return
-
-    point = (int(x * screen_width), int(y * screen_height))
     try:
+        screen_width, screen_height = gui.size()
+        if action == "scroll":
+            amount = data.get("amount", 0)
+            if isinstance(amount, (int, float)):
+                with pyautogui_lock:
+                    gui.scroll(-int(amount) * 60)
+            return
+
+        x = data.get("x")
+        y = data.get("y")
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            return
+
+        point = (int(x * screen_width), int(y * screen_height))
         with pyautogui_lock:
             if action == "click":
                 gui.click(*point)
@@ -190,6 +218,7 @@ def execute_pointer(data):
                 gui.moveTo(*point, _pause=False)
     except Exception as error:
         print("Could not execute pointer input:", repr(error))
+        report_control_status(False, f"Mouse control failed: {error}")
 
 
 @sio.on("execute-key")
@@ -215,6 +244,7 @@ def execute_key(data):
                 gui.press(ALLOWED_KEYS[key])
     except Exception as error:
         print("Could not execute key:", repr(error))
+        report_control_status(False, f"Keyboard control failed: {error}")
 
 
 @sio.on("execute-text")
@@ -230,6 +260,7 @@ def execute_text(data):
             gui.write(text, interval=0)
     except Exception as error:
         print("Could not type text:", repr(error))
+        report_control_status(False, f"Text input failed: {error}")
 
 
 @sio.on("phone-disconnected")

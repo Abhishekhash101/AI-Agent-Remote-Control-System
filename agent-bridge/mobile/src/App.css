@@ -229,6 +229,7 @@ footer span { margin: 0 7px; color: #2ca88e; }
 }
 .screen-viewer video:focus-visible { outline: 2px solid #5ee4c2; outline-offset: -3px; }
 .screen-viewer .screen-waiting { position: absolute; pointer-events: none; }
+.screen-control-hint { margin: -8px 0 12px; color: #91a0b2; font-size: 12px; }
 .screen-viewer:fullscreen,
 .screen-viewer:-webkit-full-screen {
   width: 100vw;

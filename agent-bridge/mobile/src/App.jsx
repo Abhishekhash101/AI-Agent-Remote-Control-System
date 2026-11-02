@@ -4,7 +4,7 @@ import "./App.css";
 
 // Set VITE_SERVER_URL in mobile/.env.local to your laptop's LAN address when
 // opening this app on a phone, for example http://192.168.1.20:3000.
-const SERVER_URL = import.meta.env.VITE_SERVER_URL;
+const SERVER_URL = import.meta.env.VITE_SERVER_URL || "https://agentbridge-server.onrender.com";
 
 export default function App() {
   const hostMode = new URLSearchParams(window.location.search).get("mode") === "host";
@@ -222,6 +222,11 @@ export default function App() {
       }
     });
     client.on("screen-host-available", () => setStatus("Connected · screen host available"));
+    client.on("control-status", ({ available, message }) => {
+      setStatus(available
+        ? "Connected · laptop keyboard and mouse ready"
+        : `Connected · laptop input unavailable: ${message || "check the laptop client"}`);
+    });
     client.on("screen-host-unavailable", () => { closePeer(); setStatus("Screen host disconnected"); });
     client.on("screen-ended", () => {
       closePeer();
@@ -660,6 +665,7 @@ export default function App() {
           />
           {!hasVideo && <span className="screen-waiting">Waiting for the laptop screen…</span>}
         </div>}
+        {!hostMode && socket && hasVideo && <p className="screen-control-hint">Click the shared screen to focus it, then use this laptop’s mouse and keyboard.</p>}
 
         {!hostMode && socket && hasVideo && <div className="pointer-controls" aria-label="Mouse controls">
           <button onClick={() => sendPointer(lastPointerRef.current, "click")}>Left click</button>
