@@ -19,11 +19,15 @@ const io = new Server(server, {
 
 const sessions = new Map();
 const LAPTOP_RECONNECT_GRACE_MS = 60000;
+const DEPLOYMENT_MARKER = "latest-control-diagnostics-2026-11-02";
 
 app.get('/', (req, res) => {
     res.json({
         status: "online",
-        service: "AgentBridge Server"
+        service: "AgentBridge Server",
+        message: "LATEST_DEPLOYMENT_ACTIVE",
+        deploymentMarker: DEPLOYMENT_MARKER,
+        commit: process.env.RENDER_GIT_COMMIT || null,
     });
 });
 
@@ -329,5 +333,5 @@ function generateSessionId() {
 const PORT = process.env.PORT || 3000;
 
 server.listen(PORT, "0.0.0.0", () => {
-    console.log(`AgentBridge server running on port ${PORT}`);
+    console.log(`AgentBridge server running on port ${PORT} (${DEPLOYMENT_MARKER})`);
 });
